@@ -19,6 +19,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from inscription.export._common import (
+    atomic_write_text,
     build_event_resolver,
     select_primary_event,
     stage_step_asset,
@@ -141,7 +142,7 @@ def export_html(
     body_parts.append(_render_footer(session))
 
     html_doc = _wrap(title=session.info.name, body="\n".join(body_parts))
-    destination.write_text(html_doc, encoding="utf-8")
+    atomic_write_text(destination, html_doc)
     logger.info("Exported %s to %s", session.info.name, destination)
 
     return ExportDocument(
@@ -218,11 +219,17 @@ def _render_step(
             session_root=session_root,
             assets_dir=assets_dir,
         )
-        # On stage failure, fall back to the raw screenshot path so the
-        # exporter still produces a renderable document.
-        src = f"assets/{asset_name}" if asset_name is not None else shot.relative_path
-        alt = html.escape(step.action)[:120]
-        parts.append(f'<div class="step-shot"><img src="{html.escape(src)}" alt="{alt}"></div>')
+        # On stage failure, omit the <img> entirely. Falling back to the
+        # session-relative path (``screenshots/event-1.png``) produces a
+        # broken-or-worse image reference once the HTML is moved off the
+        # build host: at best it 404s; at worst it resolves to whatever
+        # unrelated file lives at that path on the recipient's machine.
+        if asset_name is not None:
+            src = f"assets/{asset_name}"
+            alt = html.escape(step.action)[:120]
+            parts.append(
+                f'<div class="step-shot"><img src="{html.escape(src)}" alt="{alt}"></div>'
+            )
     parts.append("</div>")
     parts.append("</li>")
     return "\n".join(parts)

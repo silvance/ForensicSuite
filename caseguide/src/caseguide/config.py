@@ -7,6 +7,7 @@ expectation.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Final
@@ -138,12 +139,27 @@ class Config:
 
     @property
     def recent_case_paths(self) -> list[str]:
+        """Most-recently-opened case directories (paths only, newest first).
+
+        JSON-encoded list. The legacy ``;``-separated format split on a
+        character that's legal in Windows directory names; JSON
+        round-trips cleanly. Legacy values are still read via the
+        fallback below.
+        """
         raw = str(self._qs.value(_K_RECENT_CASE_PATHS, ""))
-        return [p for p in raw.split(";") if p]
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return [p for p in raw.split(";") if p]
+        if not isinstance(parsed, list):
+            return []
+        return [str(p) for p in parsed if p]
 
     @recent_case_paths.setter
     def recent_case_paths(self, value: list[str]) -> None:
-        self._qs.setValue(_K_RECENT_CASE_PATHS, ";".join(value))
+        self._qs.setValue(_K_RECENT_CASE_PATHS, json.dumps(list(value)))
 
     def remember_case(self, case_path: str, *, limit: int = 12) -> None:
         existing = [p for p in self.recent_case_paths if p != case_path]

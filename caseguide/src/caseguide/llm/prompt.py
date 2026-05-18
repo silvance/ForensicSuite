@@ -158,11 +158,10 @@ def build_user_prompt(*, scope: CaseScope, drafts: list[Suggestion]) -> str:
 def parse_response(text: str) -> list[RefinedSuggestion]:
     """Parse the LLM's JSON content into :class:`RefinedSuggestion` list."""
     body = _strip_code_fences(text.strip())
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError as exc:
+    data = _parse_json_lenient(body)
+    if data is None:
         msg = f"LLM content was not valid JSON: {body[:200]!r}"
-        raise LLMResponseError(msg) from exc
+        raise LLMResponseError(msg)
 
     if not isinstance(data, dict) or "suggestions" not in data:
         msg = f"LLM content missing top-level 'suggestions' key: {data!r}"
@@ -210,6 +209,64 @@ def _strip_code_fences(text: str) -> str:
     if inner.endswith("```"):
         inner = inner[:-3]
     return inner.strip()
+
+
+def _parse_json_lenient(body: str) -> object | None:
+    """Try strict JSON first; fall back to extracting the first ``{...}``.
+
+    Smaller / weakly instruction-tuned models routinely prepend a
+    sentence of commentary before the JSON object even when asked not
+    to ("Sure! Here's the JSON: { ... }"). Extracting the first
+    balanced brace block recovers those cases. Returns ``None`` when
+    neither strategy yields valid JSON. Mirrors Inscription's parser.
+    """
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        pass
+    candidate = _extract_first_json_object(body)
+    if candidate is None:
+        return None
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_first_json_object(body: str) -> str | None:
+    """Return the first balanced ``{...}`` substring in ``body``, or None.
+
+    Walks ``body`` tracking brace depth and ignoring braces inside
+    string literals (escape-aware). Stops at the first well-formed
+    object and returns its source text.
+    """
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+    for i, ch in enumerate(body):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth == 0:
+                continue
+            depth -= 1
+            if depth == 0 and start >= 0:
+                return body[start : i + 1]
+    return None
 
 
 def _coerce_suggestion(item: object, *, index: int) -> RefinedSuggestion | None:

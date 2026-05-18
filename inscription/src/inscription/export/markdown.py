@@ -22,6 +22,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from inscription.export._common import (
+    atomic_write_text,
     build_event_resolver,
     select_primary_event,
     stage_step_asset,
@@ -82,7 +83,7 @@ def export_markdown(
         )
     parts.append(_render_footer(session))
 
-    destination.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
+    atomic_write_text(destination, "\n\n".join(parts) + "\n")
     logger.info("Exported %s to %s", session.info.name, destination)
 
     return ExportDocument(

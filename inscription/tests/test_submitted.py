@@ -453,3 +453,46 @@ def test_step_list_read_only_disables_drag_drop(qtbot) -> None:  # type: ignore[
 
     lst.set_read_only(False)
     assert lst.dragDropMode() == QAbstractItemView.DragDropMode.InternalMove
+
+
+# ----------------------------------------------------- export kwargs regression
+
+
+def test_export_controller_methods_call_run_export_with_valid_kwargs(  # type: ignore[no-untyped-def]
+    qtbot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both deliverable-class export controller methods must call
+    ``run_export`` with kwargs the helper actually accepts.
+
+    Regression for the bug where ``export_forensic_notes`` passed
+    ``offer_submit=True`` -- a kwarg ``run_export`` doesn't accept --
+    crashing the menu action with TypeError on every click. Cancel
+    via getSaveFileName so we don't actually render anything; we just
+    want to confirm the kwargs the controller passes are valid.
+    """
+    from PySide6.QtWidgets import QFileDialog
+
+    repo = SessionRepository.create(workspace_root=tmp_path, name="ExportKwargs")
+    try:
+        _seed_repo_with_steps(repo)
+        ws = _FakeWorkspace()
+        rb = _FakeRecorderBar()
+        controller = SessionController(
+            workspace=ws,  # type: ignore[arg-type]
+            recorder_bar=rb,  # type: ignore[arg-type]
+        )
+        controller._activate(repo)
+
+        monkeypatch.setattr(
+            QFileDialog,
+            "getSaveFileName",
+            staticmethod(lambda *a, **k: ("", "")),  # user cancels
+        )
+        # Each call would raise TypeError before reaching the cancel
+        # branch if the controller passed an unknown kwarg.
+        controller.export_forensic_notes()
+        controller.export_pdf()
+        controller.export_html()
+        controller.export_markdown()
+    finally:
+        repo.close()

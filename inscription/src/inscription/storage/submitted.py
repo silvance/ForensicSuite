@@ -97,6 +97,16 @@ def read(session: Session) -> SubmittedMarker | None:  # noqa: PLR0911 - linear 
     except (OSError, json.JSONDecodeError):
         logger.warning("Unreadable submitted marker at %s; treating as not submitted", path)
         return None
+    # json.loads accepts bare numbers / strings / arrays at the top level;
+    # a corrupt or hand-edited marker like ``[]`` or ``42`` would crash
+    # data.get below with AttributeError and propagate past every caller.
+    if not isinstance(data, dict):
+        logger.warning(
+            "Submitted marker at %s is not a JSON object (got %s); treating as not submitted",
+            path,
+            type(data).__name__,
+        )
+        return None
     submitted_at_raw = data.get("submitted_at")
     if not isinstance(submitted_at_raw, str):
         return None

@@ -69,7 +69,12 @@ def render_report(
     # That's the right tradeoff for forensic templates: a typo in a
     # token name should surface as a render failure, not as a blank
     # spot in the finished report that the operator might miss.
-    jinja_env = Environment(undefined=StrictUndefined, autoescape=True)
+    #
+    # autoescape=False because docxtpl handles XML escaping itself.
+    # HTML autoescape would mangle every ``&``, ``<``, ``>``, ``'``,
+    # ``"`` in case data into entity refs visible in the rendered docx.
+    # S701 doesn't apply here -- this template renders DOCX, not HTML.
+    jinja_env = Environment(undefined=StrictUndefined, autoescape=False)  # noqa: S701
 
     try:
         template.render(context.as_template_dict(), jinja_env=jinja_env)

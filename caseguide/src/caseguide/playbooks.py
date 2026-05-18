@@ -332,4 +332,9 @@ def _normalised(values: list[str]) -> list[str]:
 
 
 def _any_overlap(needles: list[str], haystack: list[str]) -> bool:
-    return any(needle in stack or stack in needle for needle in needles for stack in haystack)
+    # Forward containment only: a rule entry like "iphone" should match
+    # a scope value of "iphone-13", but a partial scope value like "i"
+    # must NOT match a rule of "ios". The reverse direction (``stack in
+    # needle``) would let any short scope fragment fire wildly
+    # unrelated playbooks, eroding trust in the checklist.
+    return any(needle in stack for needle in needles for stack in haystack)

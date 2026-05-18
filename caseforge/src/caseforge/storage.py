@@ -253,8 +253,29 @@ def case_summary_at(path: Path) -> CaseSummary:
 # ------------------------------------------------------------ JSON shape
 
 
+#: Top-level keys this build understands. Anything else found on read
+#: is parked on ``Case.extras`` so a round-trip through an older build
+#: doesn't strip fields a newer build wrote -- the forward-compat
+#: contract this module's docstring promises.
+_KNOWN_TOPLEVEL_KEYS = frozenset({
+    "schema_version",
+    "caseforge_version",
+    "name",
+    "case_reference",
+    "created_at",
+    "updated_at",
+    "examiner",
+    "scope",
+    "custody",
+})
+
+
 def _to_json(case: Case) -> dict[str, object]:
-    return {
+    # Spread ``case.extras`` first so the canonical keys we emit below
+    # win on conflict -- an older build still re-asserts its own
+    # contract for every field it understands.
+    payload: dict[str, object] = dict(case.extras)
+    payload.update({
         "schema_version": case.schema_version,
         "caseforge_version": case.caseforge_version,
         "name": case.name,
@@ -288,7 +309,8 @@ def _to_json(case: Case) -> dict[str, object]:
             "seal_intact": case.custody.seal_intact,
             "notes": case.custody.notes,
         },
-    }
+    })
+    return payload
 
 
 def _from_json(raw: dict[str, object]) -> Case:
@@ -328,6 +350,10 @@ def _from_json(raw: dict[str, object]) -> Case:
         ),
         schema_version=CASE_SCHEMA_VERSION,
         caseforge_version=str(raw.get("caseforge_version", "")),
+        # Snapshot unknown top-level keys so a write back to disk
+        # round-trips them verbatim instead of silently stripping
+        # fields a newer CaseForge added.
+        extras={k: v for k, v in raw.items() if k not in _KNOWN_TOPLEVEL_KEYS},
     )
 
 

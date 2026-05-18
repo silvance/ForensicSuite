@@ -138,7 +138,12 @@ class CustodyTab(QWidget):
             qt_dt = self._received_at_edit.dateTime()
             py_dt = qt_dt.toPython()
             if isinstance(py_dt, datetime):
-                received_at: datetime | None = py_dt.replace(tzinfo=UTC)
+                # QDateTimeEdit hands back a naive datetime in local wall-
+                # clock time. Tag it with the system zone and convert to
+                # UTC for storage; bare ``replace(tzinfo=UTC)`` would
+                # mis-label the local reading as UTC and shift the
+                # custody timestamp by the local offset.
+                received_at: datetime | None = py_dt.astimezone(UTC)
             else:
                 received_at = None
         else:

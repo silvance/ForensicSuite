@@ -18,6 +18,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from inscription.export._common import (
+    atomic_write_text,
     build_event_resolver,
     select_primary_event,
     stage_step_asset,
@@ -264,7 +265,7 @@ def export_forensic_notes(
     body_parts.append(_render_sign_off(session=session, examiner=examiner))
 
     html_doc = _wrap(title=f"{session.info.name} — Forensic notes", body="\n".join(body_parts))
-    destination.write_text(html_doc, encoding="utf-8")
+    atomic_write_text(destination, html_doc)
     logger.info("Exported forensic notes for %s to %s", session.info.name, destination)
 
     return ExportDocument(

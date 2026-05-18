@@ -655,14 +655,28 @@ class SessionRepository:
             combined_ids = (*primary.source_event_ids, *other.source_event_ids)
             merged_action = _join_text(primary.action, other.action)
             merged_result = _join_text(primary.result, other.result)
+            # Union the per-step flags: if either half was marked
+            # evidentiary the merged step stays in the report, and if
+            # either was suppressed we treat the merged result as still
+            # hidden until the operator explicitly un-suppresses it.
+            merged_evidentiary = primary.evidentiary or other.evidentiary
+            merged_suppressed = primary.suppressed or other.suppressed
 
             self._conn.execute(
                 """
                 UPDATE draft_steps
-                SET action = ?, result = ?, source_event_ids = ?, manual_edit = 1
+                SET action = ?, result = ?, source_event_ids = ?,
+                    evidentiary = ?, suppressed = ?, manual_edit = 1
                 WHERE id = ?
                 """,
-                (merged_action, merged_result, json.dumps(list(combined_ids)), primary_id),
+                (
+                    merged_action,
+                    merged_result,
+                    json.dumps(list(combined_ids)),
+                    1 if merged_evidentiary else 0,
+                    1 if merged_suppressed else 0,
+                    primary_id,
+                ),
             )
             self._conn.execute("DELETE FROM draft_steps WHERE id = ?", (other_id,))
         return dataclasses.replace(
@@ -670,6 +684,8 @@ class SessionRepository:
             action=merged_action,
             result=merged_result,
             source_event_ids=combined_ids,
+            evidentiary=merged_evidentiary,
+            suppressed=merged_suppressed,
             manual_edit=True,
         )
 
@@ -711,8 +727,8 @@ class SessionRepository:
                 """
                 INSERT INTO draft_steps
                     (sequence, action, result, source_event_ids, screenshot_id,
-                     suppressed, manual_edit)
-                VALUES (?, ?, ?, ?, ?, 0, 1)
+                     suppressed, evidentiary, manual_edit)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
                 """,
                 (
                     step.sequence + 1,
@@ -720,6 +736,8 @@ class SessionRepository:
                     step.result,
                     json.dumps(list(tail)),
                     step.screenshot_id,
+                    1 if step.suppressed else 0,
+                    1 if step.evidentiary else 0,
                 ),
             )
             new_id = cursor.lastrowid

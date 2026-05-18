@@ -194,6 +194,11 @@ class Case:
     custody: CustodyRecord = field(default_factory=CustodyRecord)
     schema_version: int = CASE_SCHEMA_VERSION
     caseforge_version: str = ""
+    #: Top-level keys present on disk that this build doesn't know
+    #: about (e.g. fields a newer CaseForge added). Preserved verbatim
+    #: so a newer-then-older-then-newer write cycle doesn't strip them.
+    #: Stays empty on freshly-created cases.
+    extras: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

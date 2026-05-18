@@ -8,6 +8,7 @@ to the Inscription executable for the launcher.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Final
 
@@ -140,18 +141,30 @@ class Config:
     def recent_case_paths(self) -> list[str]:
         """Most-recently-opened case directories (paths only, newest first).
 
-        Stored as a single ``;``-separated string; QSettings lists
-        round-trip awkwardly through INI files so we keep the format
-        explicit.
+        Stored as a JSON-encoded list. The previous format was a
+        ``;``-separated string, but ``;`` is a legal character in
+        Windows file/directory names ("jan;feb-2026"), and a path
+        containing ``;`` would split into broken fragments on the next
+        read. JSON sidesteps that and survives INI round-tripping.
+
+        Legacy ``;``-separated values written by older builds are read
+        back via the fallback below; the first write after upgrade
+        re-emits as JSON.
         """
         raw = str(self._qs.value(_K_RECENT_CASE_PATHS, ""))
         if not raw:
             return []
-        return [p for p in raw.split(";") if p]
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return [p for p in raw.split(";") if p]
+        if not isinstance(parsed, list):
+            return []
+        return [str(p) for p in parsed if p]
 
     @recent_case_paths.setter
     def recent_case_paths(self, value: list[str]) -> None:
-        self._qs.setValue(_K_RECENT_CASE_PATHS, ";".join(value))
+        self._qs.setValue(_K_RECENT_CASE_PATHS, json.dumps(list(value)))
 
     def remember_case(self, case_path: str, *, limit: int = 12) -> None:
         """Push ``case_path`` to the head of the recents list."""
