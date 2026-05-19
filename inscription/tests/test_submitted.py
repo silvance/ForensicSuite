@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QAbstractItemView
+from PySide6.QtWidgets import QAbstractItemView, QFileDialog
 
 from inscription.model import DraftStep, EventKind, ResolvedElement
 from inscription.storage import SessionRepository, SubmittedMarker, submitted
@@ -436,8 +436,6 @@ def test_export_controller_methods_call_run_export_with_valid_kwargs(  # type: i
     via getSaveFileName so we don't actually render anything; we just
     want to confirm the kwargs the controller passes are valid.
     """
-    from PySide6.QtWidgets import QFileDialog
-
     repo = SessionRepository.create(workspace_root=tmp_path, name="ExportKwargs")
     try:
         _seed_repo_with_steps(repo)
