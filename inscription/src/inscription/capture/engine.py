@@ -22,8 +22,10 @@ import hashlib
 import logging
 import os
 import queue
+import sys
 import threading
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -31,7 +33,7 @@ from inscription.capture.events import RawCaptureEvent
 from inscription.model import EventKind, utcnow
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from datetime import datetime
 
     from inscription.model import ResolvedElement
@@ -41,6 +43,61 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _STOP_SENTINEL = object()
+
+#: HRESULT returned by ``CoInitializeEx`` when COM is already
+#: initialised on the calling thread with a different apartment model.
+#: Treated as a benign no-op: the existing apartment owner is
+#: responsible for the matching ``CoUninitialize``.
+_RPC_E_CHANGED_MODE = -2147417850  # 0x80010106 as a signed 32-bit int
+
+
+@contextmanager
+def _com_apartment() -> Iterator[None]:
+    """Initialise STA COM for the lifetime of the worker thread.
+
+    Windows UI Automation is a COM API; ``pywinauto`` ultimately calls
+    into it through ``comtypes``. Every thread that touches COM must
+    have an apartment initialised first, otherwise the calls are
+    undefined behaviour -- in practice the resolver returns garbage,
+    or hangs, or works only because some unrelated import happened to
+    have run ``CoInitializeEx`` as a side-effect on this thread.
+
+    UIA is documented as STA-compatible (it marshals to its own
+    server thread internally), so we use COINIT_APARTMENTTHREADED to
+    match what pywinauto's main-thread usage assumes. ``RPC_E_CHANGED_MODE``
+    means COM was already initialised on this thread with a different
+    apartment model; we leave the existing one in place and skip the
+    paired uninit, matching the ``CoInitializeEx`` contract.
+
+    No-op on non-Windows platforms -- there is no resolver there to
+    talk to UIA, so there's nothing to initialise.
+    """
+    if sys.platform != "win32":
+        yield
+        return
+    try:
+        import comtypes  # noqa: PLC0415 - Windows-only optional dep
+    except Exception as exc:
+        logger.warning("comtypes unavailable; UIA resolver may misbehave: %s", exc)
+        yield
+        return
+    initialised = False
+    try:
+        try:
+            comtypes.CoInitializeEx(comtypes.COINIT_APARTMENTTHREADED)
+            initialised = True
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == _RPC_E_CHANGED_MODE:
+                logger.debug("COM already initialised on capture thread with a different apartment")
+            else:
+                logger.warning("CoInitializeEx failed on capture thread: %s", exc)
+        yield
+    finally:
+        if initialised:
+            try:
+                comtypes.CoUninitialize()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("CoUninitialize on capture thread raised: %s", exc)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -172,39 +229,41 @@ class CaptureEngine:
     # -------------------------------------------------------- internals
 
     def _run(self) -> None:
-        try:
-            foreground = self._foreground_factory()
-            resolver = self._resolver_factory(foreground)
-        except Exception:
-            logger.exception("Failed to initialise capture platform")
-            return
-
-        while True:
-            item = self._queue.get()
-            if item is _STOP_SENTINEL:
-                self._queue.task_done()
-                break
-            if not isinstance(item, RawCaptureEvent):
-                # Defensive: only _STOP_SENTINEL or RawCaptureEvent
-                # objects are ever submitted to this queue, so reaching
-                # here means a programmer error in submit_event. We
-                # previously used `assert isinstance(...)`, which gets
-                # stripped under `python -O`. Logging + skipping is
-                # safer: the rest of the queue keeps draining instead
-                # of having the worker crash.
-                logger.error(
-                    "engine: discarded unexpected queue item %r (type %s)",
-                    item,
-                    type(item).__name__,
-                )
-                self._queue.task_done()
-                continue
+        with _com_apartment():
             try:
-                self._process(item, foreground=foreground, resolver=resolver)
+                foreground = self._foreground_factory()
+                resolver = self._resolver_factory(foreground)
             except Exception:
-                logger.exception("Processing failed for %r", item)
-            finally:
-                self._queue.task_done()
+                logger.exception("Failed to initialise capture platform")
+                return
+
+            while True:
+                item = self._queue.get()
+                if item is _STOP_SENTINEL:
+                    self._queue.task_done()
+                    break
+                if not isinstance(item, RawCaptureEvent):
+                    # Defensive: only _STOP_SENTINEL or RawCaptureEvent
+                    # objects are ever submitted to this queue, so
+                    # reaching here means a programmer error in
+                    # submit_event. We previously used `assert
+                    # isinstance(...)`, which gets stripped under
+                    # `python -O`. Logging + skipping is safer: the
+                    # rest of the queue keeps draining instead of
+                    # having the worker crash.
+                    logger.error(
+                        "engine: discarded unexpected queue item %r (type %s)",
+                        item,
+                        type(item).__name__,
+                    )
+                    self._queue.task_done()
+                    continue
+                try:
+                    self._process(item, foreground=foreground, resolver=resolver)
+                except Exception:
+                    logger.exception("Processing failed for %r", item)
+                finally:
+                    self._queue.task_done()
 
     def _process(
         self,
