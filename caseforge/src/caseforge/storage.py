@@ -19,6 +19,8 @@ import re
 import shutil
 from pathlib import Path
 
+from suite_common.atomic import atomic_write_text
+
 from caseforge.model import (
     CASE_SCHEMA_VERSION,
     Case,
@@ -123,17 +125,10 @@ def write_case(case_dir: Path, case: Case) -> None:
     case_dir.mkdir(parents=True, exist_ok=True)
     payload = _to_json(case)
     target = case_dir / CASE_FILENAME
-    tmp = target.with_suffix(".json.tmp")
-    # Drop any leftover .tmp from a prior crash before we write our own.
-    tmp.unlink(missing_ok=True)
-    try:
-        tmp.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
-        tmp.replace(target)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
+    atomic_write_text(
+        target,
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+    )
 
 
 def read_case(case_dir: Path) -> Case:

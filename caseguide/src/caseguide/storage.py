@@ -15,6 +15,8 @@ import json
 import logging
 from pathlib import Path
 
+from suite_common.atomic import atomic_write_text
+
 from caseguide.model import (
     PRIORITY_RECOMMENDED,
     SUGGESTIONS_SCHEMA_VERSION,
@@ -84,21 +86,10 @@ def write_suggestions(case_dir: Path, doc: SuggestionsDocument) -> Path:
     target = suggestions_path(case_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = _to_json(doc)
-    tmp = target.with_suffix(".json.tmp")
-    # Drop any leftover .tmp from a prior crash before we write our own;
-    # otherwise repeated crashes accumulate junk and Path.write_text's
-    # default would happily overwrite without complaint anyway.
-    tmp.unlink(missing_ok=True)
-    try:
-        tmp.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
-        tmp.replace(target)
-    except OSError:
-        # Clean up the half-written .tmp on failure so the next attempt
-        # starts from a clean slate.
-        tmp.unlink(missing_ok=True)
-        raise
+    atomic_write_text(
+        target,
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+    )
     return target
 
 
