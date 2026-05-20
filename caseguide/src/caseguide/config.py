@@ -162,10 +162,31 @@ class Config:
         self._qs.setValue(_K_RECENT_CASE_PATHS, json.dumps(list(value)))
 
     def remember_case(self, case_path: str, *, limit: int = 12) -> None:
-        existing = [p for p in self.recent_case_paths if p != case_path]
+        """Push ``case_path`` to the head of the recents list.
+
+        Dedupes via ``os.path.normpath`` + ``os.path.normcase`` so
+        cosmetic variants (trailing slash, ``./`` components, mixed
+        drive-letter case on Windows) collapse into one entry. See
+        the CaseForge sibling for the rationale.
+        """
+        normalised_new = _normalise_recent_path(case_path)
+        existing = [
+            p for p in self.recent_case_paths
+            if _normalise_recent_path(p) != normalised_new
+        ]
         self.recent_case_paths = [case_path, *existing][:limit]
 
     # ------------------------------------------------------- persistence
 
     def sync(self) -> None:
         self._qs.sync()
+
+
+def _normalise_recent_path(p: str) -> str:
+    """Canonical form for recents-list dedupe comparison.
+
+    Pure-string normalisation (no filesystem touch) so a deleted or
+    moved case still dedupes against its old entry. Mirrors the
+    CaseForge sibling helper.
+    """
+    return os.path.normcase(os.path.normpath(p))

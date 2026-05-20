@@ -58,3 +58,60 @@ def test_suite_llm_base_url_empty_env_falls_back(tmp_path, monkeypatch, env_valu
     monkeypatch.setenv("SUITE_LLM_BASE_URL", env_value)
     cfg = Config(path=tmp_path / "c.ini")
     assert cfg.llm_base_url == DEFAULT_LLM_BASE_URL
+
+
+# ---- remember_case dedupe ------------------------------------------------
+
+
+def test_remember_case_dedupes_trailing_slash_variant(tmp_path) -> None:
+    """Same physical case, different trailing slash, must collapse.
+
+    Regression: ``remember_case`` used exact string equality, so
+    ``/cases/foo`` and ``/cases/foo/`` both ended up in the list and
+    the recents picker showed duplicates of the same case.
+    """
+    cfg = Config(path=tmp_path / "c.ini")
+    cfg.remember_case("/cases/foo")
+    cfg.remember_case("/cases/foo/")
+    assert len(cfg.recent_case_paths) == 1
+
+
+def test_remember_case_dedupes_dot_components(tmp_path) -> None:
+    """``./`` / ``..`` components also count as the same path.
+
+    Operator types ``cd .. && open ./cases/foo`` from one tool and
+    ``open /home/me/cases/foo`` from another -- both should yield a
+    single recents entry.
+    """
+    cfg = Config(path=tmp_path / "c.ini")
+    cfg.remember_case("/cases/foo")
+    cfg.remember_case("/cases/./foo")
+    cfg.remember_case("/cases/bar/../foo")
+    assert len(cfg.recent_case_paths) == 1
+
+
+def test_remember_case_distinguishes_genuinely_different_paths(tmp_path) -> None:
+    """Sanity: two truly different cases stay as two entries.
+
+    Guards against the normalisation being too aggressive (e.g.
+    collapsing siblings or unrelated cases into one).
+    """
+    cfg = Config(path=tmp_path / "c.ini")
+    cfg.remember_case("/cases/foo")
+    cfg.remember_case("/cases/bar")
+    assert len(cfg.recent_case_paths) == 2
+
+
+def test_remember_case_moves_duplicate_to_head(tmp_path) -> None:
+    """Re-opening the same case (cosmetically different path) bumps
+    its existing entry to the head instead of leaving a stale older
+    copy. Order matters for the recents picker -- newest-first.
+    """
+    cfg = Config(path=tmp_path / "c.ini")
+    cfg.remember_case("/cases/foo")
+    cfg.remember_case("/cases/bar")
+    cfg.remember_case("/cases/foo/")  # cosmetic variant of foo
+    paths = cfg.recent_case_paths
+    assert len(paths) == 2
+    assert paths[0] == "/cases/foo/"  # newest, bumped to head
+    assert paths[1] == "/cases/bar"
