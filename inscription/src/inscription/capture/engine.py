@@ -44,6 +44,13 @@ logger = logging.getLogger(__name__)
 
 _STOP_SENTINEL = object()
 
+#: How often the capture worker wakes up to check ``self._stopping``
+#: when the queue is empty. Lets the worker exit cleanly even when
+#: ``stop()`` couldn't fit the sentinel into a full queue. 0.5s is
+#: imperceptible at human click rate but bounds shutdown latency
+#: so a stop request never hangs.
+_STOP_POLL_INTERVAL_S = 0.5
+
 #: HRESULT returned by ``CoInitializeEx`` when COM is already
 #: initialised on the calling thread with a different apartment model.
 #: Treated as a benign no-op: the existing apartment owner is
@@ -204,11 +211,32 @@ class CaptureEngine:
         logger.info("Capture engine started")
 
     def stop(self, *, timeout: float = 5.0) -> None:
-        self.stop_sources()
+        # Set the stopping flag BEFORE stopping sources: a source mid-
+        # iteration can still complete a submit() between when we
+        # called src.stop() on one source and when the next is
+        # quiesced. Flipping the flag first means submit()'s
+        # ``if self._stopping.is_set(): return False`` guard catches
+        # those late events instead of letting them slip into the queue
+        # after we've already decided to shut down.
         self._stopping.set()
-        self._queue.put(_STOP_SENTINEL)
+        self.stop_sources()
+        # ``put_nowait`` rather than blocking put: if the queue is full
+        # and the worker is hung on a sink (so it never drains), a
+        # blocking put would deadlock here forever. The worker also
+        # polls _stopping on each get() timeout (see _run), so even if
+        # the sentinel never lands the worker exits cleanly within the
+        # poll interval.
+        try:
+            self._queue.put_nowait(_STOP_SENTINEL)
+        except queue.Full:
+            logger.debug("Capture queue full at stop(); relying on _stopping poll")
         if self._worker is not None:
             self._worker.join(timeout=timeout)
+            if self._worker.is_alive():
+                logger.warning(
+                    "Capture worker did not exit within %.1fs; abandoning it (daemon)",
+                    timeout,
+                )
             self._worker = None
         logger.info("Capture engine stopped")
 
@@ -238,7 +266,17 @@ class CaptureEngine:
                 return
 
             while True:
-                item = self._queue.get()
+                try:
+                    item = self._queue.get(timeout=_STOP_POLL_INTERVAL_S)
+                except queue.Empty:
+                    # Periodic wake-up so we notice _stopping even when
+                    # the sentinel never lands -- e.g. stop() couldn't
+                    # put_nowait because the queue was full. The poll is
+                    # cheap relative to the events arriving at human
+                    # click-rate.
+                    if self._stopping.is_set():
+                        break
+                    continue
                 if item is _STOP_SENTINEL:
                     self._queue.task_done()
                     break

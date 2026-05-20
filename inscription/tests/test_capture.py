@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import queue
 import sys
 import threading
 import time
@@ -256,3 +257,95 @@ def test_engine_run_uses_com_apartment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert entered.wait(timeout=1.0)
     engine.stop()
     assert exited.wait(timeout=1.0)
+
+
+# ---------------------------------------------------------- stop races
+
+
+def test_stop_drops_late_source_events_via_stopping_flag() -> None:
+    """submit()'s _stopping guard must reject events from any source
+    that's still mid-iteration when stop() returns from stop_sources().
+
+    Regression: stop() used to set _stopping AFTER stop_sources(),
+    so a source whose .stop() returned could still race a final event
+    into the queue because _stopping was still False during the
+    teardown window. Flipping the flag first closes that window.
+    """
+    engine = CaptureEngine(
+        foreground_factory=_FakeForeground,
+        resolver_factory=_fake_resolver,
+    )
+    engine.start()
+    try:
+        # Simulate stop() having been called: just set the flag and
+        # confirm submit() refuses. The whole-shutdown ordering is
+        # exercised in test_engine_stops_cleanly_without_events; here
+        # we just lock the contract that submit() honours _stopping.
+        engine._stopping.set()
+        accepted = engine.submit(
+            RawCaptureEvent(kind=EventKind.CLICK, x=1, y=1, button="left")
+        )
+        assert accepted is False
+    finally:
+        engine._stopping.clear()  # let stop() run its normal path
+        engine.stop()
+
+
+def test_stop_does_not_block_when_queue_is_full() -> None:
+    """stop() must not deadlock if the queue is full and the worker
+    is hung on a sink.
+
+    Regression: the old stop() did a blocking ``_queue.put(_STOP_SENTINEL)``
+    which would deadlock if the worker couldn't drain (e.g. a sink
+    that raised + hung). Now the sentinel goes through put_nowait and
+    the worker's get() has a timeout so it also checks _stopping.
+    """
+    # Tiny queue so we can fill it in one shot.
+    engine = CaptureEngine(
+        foreground_factory=_FakeForeground,
+        resolver_factory=_fake_resolver,
+        queue_maxsize=2,
+    )
+    # Don't start a worker -- we want to simulate the "worker hung"
+    # case where nothing is draining the queue.
+    engine._stopping.clear()
+    # Fill the queue past its capacity.
+    for i in range(4):
+        try:
+            engine._queue.put_nowait(
+                RawCaptureEvent(kind=EventKind.CLICK, x=i, y=i, button="left")
+            )
+        except queue.Full:
+            break
+    # stop() must return within a few seconds even with a full queue
+    # and no worker. The worker join is a no-op when _worker is None.
+    start = time.monotonic()
+    engine.stop(timeout=1.0)
+    elapsed = time.monotonic() - start
+    assert elapsed < 2.0, f"stop() blocked for {elapsed:.2f}s on a full queue"
+
+
+def test_worker_exits_when_stopping_set_even_without_sentinel() -> None:
+    """The worker's queue.get() uses a poll timeout so it can exit
+    via _stopping even when the sentinel never lands.
+
+    Regression: stop() now does put_nowait for the sentinel, so a
+    full queue means the sentinel is silently dropped. The worker
+    must still terminate because get() times out, checks _stopping,
+    and breaks.
+    """
+    engine = CaptureEngine(
+        foreground_factory=_FakeForeground,
+        resolver_factory=_fake_resolver,
+    )
+    engine.start()
+    try:
+        # Set _stopping directly without going through stop() so the
+        # sentinel is never put. The worker's get() must time out
+        # within _STOP_POLL_INTERVAL_S and notice the flag.
+        engine._stopping.set()
+        assert engine._worker is not None
+        engine._worker.join(timeout=engine_module._STOP_POLL_INTERVAL_S * 4)
+        assert not engine._worker.is_alive()
+    finally:
+        engine._worker = None  # avoid stop() trying to re-join
