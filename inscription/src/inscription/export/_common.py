@@ -27,6 +27,8 @@ import logging
 import shutil
 from typing import TYPE_CHECKING
 
+from suite_common.atomic import atomic_write_text as _atomic_write_text
+
 from inscription.render import crop_highlight
 
 if TYPE_CHECKING:
@@ -43,19 +45,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-def atomic_write_text(destination: Path, body: str, *, encoding: str = "utf-8") -> None:
-    """Write ``body`` to ``destination`` via temp-file + rename.
-
-    A crash or disk-full mid-write must not leave a truncated
-    deliverable at the destination path -- a half-written HTML /
-    Markdown / forensic-notes file masquerading as the real export
-    is worse than a missing file. Mirrors the temp-file pattern used
-    by ``submitted.mark`` and the manifest writer.
-    """
-    tmp = destination.with_suffix(destination.suffix + ".tmp")
-    tmp.write_text(body, encoding=encoding)
-    tmp.replace(destination)
+# Re-exported for the exporters that already import this name from
+# ``inscription.export._common``. The implementation lives in
+# ``suite_common.atomic`` so every persistent writer in the suite
+# uses the same crash-safe path.
+atomic_write_text = _atomic_write_text
 
 
 def select_primary_event(

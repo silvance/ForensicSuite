@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from suite_common.atomic import atomic_write_text
+
 from inscription.model import utcnow
 
 if TYPE_CHECKING:
@@ -161,10 +163,7 @@ def mark(
 
     session.internal_dir.mkdir(parents=True, exist_ok=True)
     path = marker_path(session)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    body = json.dumps(payload, indent=2) + "\n"
-    tmp_path.write_text(body, encoding="utf-8")
-    tmp_path.replace(path)
+    atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
     logger.info(
         "Marked session %r as submitted at %s",
         session.info.name,

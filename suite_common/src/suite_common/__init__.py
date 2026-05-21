@@ -1,7 +1,10 @@
 """Shared bits for the Inscription / CaseForge / CaseGuide suite.
 
-Four halves now:
+Five halves now:
 
+- :mod:`suite_common.atomic` — crash-safe temp+rename+fsync writer
+  used by every persistent JSON / HTML / Markdown / manifest path in
+  the suite.
 - :mod:`suite_common.llm` — OpenAI-compatible chat-completions client used
   by Inscription's step rewriter and CaseGuide's suggestions refiner.
 - :mod:`suite_common.coerce` — JSON-tolerant coercion helpers used by every
@@ -14,6 +17,7 @@ Four halves now:
   ~/.local/share decision.
 """
 
+from suite_common.atomic import atomic_write_text
 from suite_common.bundle import bundle_root, read_version_info
 from suite_common.coerce import (
     coerce_bool,
@@ -48,6 +52,7 @@ __all__ = [
     "LLMError",
     "LLMRequestError",
     "LLMResponseError",
+    "atomic_write_text",
     "bundle_root",
     "coerce_bool",
     "coerce_int",
