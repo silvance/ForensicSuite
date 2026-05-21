@@ -9,6 +9,7 @@ to the Inscription executable for the launcher.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Final
 
@@ -167,8 +168,21 @@ class Config:
         self._qs.setValue(_K_RECENT_CASE_PATHS, json.dumps(list(value)))
 
     def remember_case(self, case_path: str, *, limit: int = 12) -> None:
-        """Push ``case_path`` to the head of the recents list."""
-        existing = [p for p in self.recent_case_paths if p != case_path]
+        """Push ``case_path`` to the head of the recents list.
+
+        Dedupes via ``os.path.normpath`` + ``os.path.normcase`` so the
+        same physical case stored under cosmetic variants
+        (trailing slash, ``./`` components, mixed drive-letter case on
+        Windows) collapses into one entry. Without normalisation,
+        legacy entries written by older builds that didn't call
+        ``Path.resolve()`` would accumulate alongside the new
+        canonical form and the recents picker would show duplicates.
+        """
+        normalised_new = _normalise_recent_path(case_path)
+        existing = [
+            p for p in self.recent_case_paths
+            if _normalise_recent_path(p) != normalised_new
+        ]
         self.recent_case_paths = [case_path, *existing][:limit]
 
     # -------------------------------------------------------- onboarding
@@ -192,3 +206,17 @@ class Config:
 
     def sync(self) -> None:
         self._qs.sync()
+
+
+def _normalise_recent_path(p: str) -> str:
+    """Canonical form for recents-list dedupe comparison.
+
+    Uses ``os.path.normpath`` + ``os.path.normcase`` because they're
+    pure-string operations -- ``Path.resolve()`` would touch the
+    filesystem and (on Windows) only normalise case for paths that
+    actually exist, so a deleted-then-restored case would dedupe
+    against itself but not against a moved sibling. The audit's
+    "recents id collisions" finding hinged on cosmetic variants
+    surviving the comparison; this collapses them all.
+    """
+    return os.path.normcase(os.path.normpath(p))
