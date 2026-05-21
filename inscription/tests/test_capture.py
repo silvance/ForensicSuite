@@ -256,3 +256,126 @@ def test_engine_run_uses_com_apartment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert entered.wait(timeout=1.0)
     engine.stop()
     assert exited.wait(timeout=1.0)
+
+
+# ----------------------------------------------------- sink failure surfacing
+
+
+class _ExplodingSink:
+    """Raises on every event so we can observe the engine's reaction."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def handle(self, _event: EnrichedEvent) -> None:
+        self.calls += 1
+        msg = "simulated sink failure"
+        raise RuntimeError(msg)
+
+
+def test_engine_counts_sink_failures() -> None:
+    """The engine exposes a monotonic counter of sink.handle() raises.
+
+    Previously a failing sink was logged and forgotten -- a critical
+    sink wedging silently (e.g. SessionSink on a disk-full) looked
+    identical to "no events yet" from the outside. The counter lets
+    the controller assert "recording is healthy".
+    """
+    engine = CaptureEngine(
+        foreground_factory=_FakeForeground,
+        resolver_factory=_fake_resolver,
+    )
+    sink = _ExplodingSink()
+    engine.add_sink(sink)
+    engine.start()
+    try:
+        engine.submit(RawCaptureEvent(kind=EventKind.KEY_PRESS, key="enter"))
+        engine.submit(RawCaptureEvent(kind=EventKind.KEY_PRESS, key="a"))
+        _wait_for(lambda: sink.calls >= 2, timeout=1.0)
+    finally:
+        engine.stop()
+    assert engine.sink_failure_count == 2
+
+
+def test_engine_invokes_on_sink_error_callback() -> None:
+    """A registered ``on_sink_error`` callback fires for each failure.
+
+    The callback is the engine's hook for surfacing "recording is
+    broken" up to the UI without baking Qt awareness into the
+    engine itself.
+    """
+    errors: list[tuple[object, str]] = []
+
+    def _record(sink: object, exc: BaseException) -> None:
+        errors.append((sink, str(exc)))
+
+    engine = CaptureEngine(
+        foreground_factory=_FakeForeground,
+        resolver_factory=_fake_resolver,
+        on_sink_error=_record,
+    )
+    sink = _ExplodingSink()
+    engine.add_sink(sink)
+    engine.start()
+    try:
+        engine.submit(RawCaptureEvent(kind=EventKind.KEY_PRESS, key="enter"))
+        _wait_for(lambda: len(errors) >= 1, timeout=1.0)
+    finally:
+        engine.stop()
+    assert len(errors) == 1
+    assert errors[0][0] is sink
+    assert "simulated sink failure" in errors[0][1]
+
+
+def test_engine_survives_buggy_on_sink_error_callback() -> None:
+    """A callback that raises must not crash the capture worker.
+
+    The callback exists for observability; it's not allowed to
+    introduce new failure modes. The engine wraps the call so a
+    misbehaving handler is logged and the loop continues.
+    """
+    def _bad_callback(_sink: object, _exc: BaseException) -> None:
+        msg = "callback itself raised"
+        raise ValueError(msg)
+
+    engine = CaptureEngine(
+        foreground_factory=_FakeForeground,
+        resolver_factory=_fake_resolver,
+        on_sink_error=_bad_callback,
+    )
+    sink = _ExplodingSink()
+    engine.add_sink(sink)
+    engine.start()
+    try:
+        engine.submit(RawCaptureEvent(kind=EventKind.KEY_PRESS, key="a"))
+        engine.submit(RawCaptureEvent(kind=EventKind.KEY_PRESS, key="b"))
+        _wait_for(lambda: sink.calls >= 2, timeout=1.0)
+    finally:
+        engine.stop()
+    # Both events processed despite the buggy callback; counter still
+    # advanced; worker didn't die.
+    assert engine.sink_failure_count == 2
+
+
+def test_engine_one_failing_sink_does_not_block_others() -> None:
+    """A sink that raises must not prevent other sinks from receiving
+    the same event. Preserves the existing best-effort fan-out so a
+    non-critical sink (LiveStepGenerator) failing doesn't drop the
+    SessionSink write that immediately follows it.
+    """
+    failing = _ExplodingSink()
+    healthy = _CollectingSink()
+    engine = CaptureEngine(
+        foreground_factory=_FakeForeground,
+        resolver_factory=_fake_resolver,
+    )
+    engine.add_sink(failing)  # registered first; raises
+    engine.add_sink(healthy)  # registered second; must still get the event
+    engine.start()
+    try:
+        engine.submit(RawCaptureEvent(kind=EventKind.KEY_PRESS, key="enter"))
+        _wait_for(lambda: len(healthy.events) >= 1, timeout=1.0)
+    finally:
+        engine.stop()
+    assert len(healthy.events) == 1
+    assert engine.sink_failure_count == 1
