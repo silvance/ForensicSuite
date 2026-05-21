@@ -45,6 +45,17 @@ class StorageError(Exception):
     """Wrapper around any suggestions.json read/write failure."""
 
 
+class SuggestionsSchemaVersionError(StorageError):
+    """The on-disk suggestions.json was written by a newer CaseGuide.
+
+    Reading a future format with this build risks silently dropping
+    fields the operator's marked decisions live in -- e.g. a new
+    ``locked`` flag or a renamed ``priority`` shape. Raising here is
+    safer than parsing with defaults and rewriting the file, which
+    would truncate the future-build data on the next save.
+    """
+
+
 def suggestions_path(case_dir: Path) -> Path:
     return case_dir / CASEGUIDE_DIRNAME / SUGGESTIONS_FILENAME
 
@@ -78,6 +89,20 @@ def read_suggestions(case_dir: Path) -> SuggestionsDocument | None:
     if not isinstance(raw, dict):
         msg = f"{target} top-level JSON must be an object"
         raise StorageError(msg)
+    # Reject a future schema BEFORE _from_json drops unknown fields
+    # silently. coerce_int defaults to SUGGESTIONS_SCHEMA_VERSION when
+    # the field is missing, which is fine for legacy files but would
+    # mask a v3 file we shouldn't load -- so look at the raw value
+    # here and refuse explicitly.
+    raw_version = raw.get("schema_version")
+    if isinstance(raw_version, int) and raw_version > SUGGESTIONS_SCHEMA_VERSION:
+        msg = (
+            f"{target} schema_version is {raw_version}; this CaseGuide "
+            f"build supports up to v{SUGGESTIONS_SCHEMA_VERSION}. Open "
+            f"the case with a newer CaseGuide, or back up and delete "
+            f"{target.name} to regenerate from scratch."
+        )
+        raise SuggestionsSchemaVersionError(msg)
     return _from_json(raw)
 
 

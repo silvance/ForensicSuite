@@ -17,6 +17,7 @@ from caseguide.model import (
 from caseguide.storage import (
     SUGGESTIONS_FILENAME,
     StorageError,
+    SuggestionsSchemaVersionError,
     read_suggestions,
     suggestions_path,
     write_suggestions,
@@ -147,3 +148,82 @@ def test_v1_file_loads_with_default_completion(tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.suggestions[0].completed is False
     assert loaded.suggestions[0].completed_at is None
+
+
+# ----------------------------------------------------- schema version
+
+
+def test_read_refuses_future_schema_version(tmp_path: Path) -> None:
+    """A suggestions.json written by a newer CaseGuide must be rejected
+    explicitly, not parsed best-effort.
+
+    Silent partial-load would let the older build round-trip the file
+    with missing fields, truncating decisions the newer build had
+    written -- the operator's completion marks for new-format fields
+    would vanish without warning on the next save.
+    """
+    from caseguide.model import SUGGESTIONS_SCHEMA_VERSION  # noqa: PLC0415
+
+    case_dir = tmp_path / "future"
+    case_dir.mkdir()
+    target = suggestions_path(case_dir)
+    target.parent.mkdir()
+    target.write_text(
+        json.dumps({
+            "schema_version": SUGGESTIONS_SCHEMA_VERSION + 1,
+            "generated_at": "2026-05-20T00:00:00+00:00",
+            "scope_summary": "",
+            "playbooks": [],
+            "suggestions": [],
+        }),
+        encoding="utf-8",
+    )
+    with pytest.raises(SuggestionsSchemaVersionError):
+        read_suggestions(case_dir)
+
+
+def test_read_accepts_current_schema_version(tmp_path: Path) -> None:
+    """Sanity: the current schema_version (the value we just wrote)
+    loads cleanly. Guards against the version check being too strict.
+    """
+    from caseguide.model import SUGGESTIONS_SCHEMA_VERSION  # noqa: PLC0415
+
+    case_dir = tmp_path / "current"
+    case_dir.mkdir()
+    target = suggestions_path(case_dir)
+    target.parent.mkdir()
+    target.write_text(
+        json.dumps({
+            "schema_version": SUGGESTIONS_SCHEMA_VERSION,
+            "generated_at": "2026-05-20T00:00:00+00:00",
+            "scope_summary": "",
+            "playbooks": [],
+            "suggestions": [],
+        }),
+        encoding="utf-8",
+    )
+    loaded = read_suggestions(case_dir)
+    assert loaded is not None
+    assert loaded.schema_version == SUGGESTIONS_SCHEMA_VERSION
+
+
+def test_read_accepts_legacy_schema_version(tmp_path: Path) -> None:
+    """A v1 file (the only legacy version) still loads -- the version
+    check only fires for FUTURE versions, never for older ones.
+    """
+    case_dir = tmp_path / "legacy"
+    case_dir.mkdir()
+    target = suggestions_path(case_dir)
+    target.parent.mkdir()
+    target.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "generated_at": "2026-05-20T00:00:00+00:00",
+            "scope_summary": "",
+            "playbooks": [],
+            "suggestions": [],
+        }),
+        encoding="utf-8",
+    )
+    loaded = read_suggestions(case_dir)
+    assert loaded is not None
