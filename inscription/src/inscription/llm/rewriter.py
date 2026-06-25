@@ -15,6 +15,7 @@ yet, there is nothing to rewrite — we don't call the LLM at all.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from suite_common.llm import LLMResponseError
@@ -41,6 +42,20 @@ logger = logging.getLogger(__name__)
 _RETRY_REPLY_PREVIEW_LIMIT = 1500
 
 
+@dataclass(frozen=True, slots=True)
+class _StepFlags:
+    """Sticky per-event flags carried across a rewrite.
+
+    Independent of LLM output: the user marks a step evidentiary or
+    suppressed via the workspace controls, and that decision survives
+    every subsequent rewrite/regenerate cycle regardless of how the
+    LLM re-clusters the underlying events.
+    """
+
+    evidentiary: bool = False
+    suppressed: bool = False
+
+
 class StepRewriter:
     """Rewrite a session's draft_steps using a language model."""
 
@@ -65,6 +80,25 @@ class StepRewriter:
         manual_by_sources: dict[tuple[int, ...], DraftStep] = {
             s.source_event_ids: s for s in existing_steps if s.manual_edit
         }
+        # Per-event flag index: for each source event the user touched
+        # via "mark as evidentiary" or "suppress", remember the flags
+        # so a rewrite that re-clusters the events the LLM saw still
+        # carries those decisions across. Indexed by event id rather
+        # than source_event_ids tuple because the LLM may merge/split
+        # events differently from how the user grouped them; any new
+        # step that mentions an event the user flagged should inherit
+        # the flag. Mirrors the OR-on-merge / propagate-on-split
+        # behaviour ``merge_steps`` / ``split_step`` use in storage.
+        flag_by_event_id: dict[int, _StepFlags] = {}
+        for s in existing_steps:
+            if not (s.evidentiary or s.suppressed):
+                continue
+            for eid in s.source_event_ids:
+                prev = flag_by_event_id.get(eid, _StepFlags())
+                flag_by_event_id[eid] = _StepFlags(
+                    evidentiary=prev.evidentiary or s.evidentiary,
+                    suppressed=prev.suppressed or s.suppressed,
+                )
 
         resolved_by_id = self._load_resolved_elements(events)
 
@@ -84,6 +118,7 @@ class StepRewriter:
             rewritten=rewritten,
             events=events,
             manual_by_sources=manual_by_sources,
+            flag_by_event_id=flag_by_event_id,
         )
         if not new_steps:
             msg = "LLM produced no usable steps after manual-edit merge"
@@ -166,12 +201,17 @@ class StepRewriter:
         rewritten: list[RewrittenStep],
         events: list[RawEvent],
         manual_by_sources: dict[tuple[int, ...], DraftStep],
+        flag_by_event_id: dict[int, _StepFlags],
     ) -> list[DraftStep]:
         """Turn parsed LLM steps into DraftStep rows ready for replace_steps.
 
         Picks each step's screenshot_id from the last referenced event that
         has one (the "result of the action" frame is usually most useful).
-        Preserves manual-edit text when the key matches.
+        Preserves manual-edit text when the source_event_ids tuple is an
+        exact match, and ORs the evidentiary / suppressed flags across
+        every source event the new step references -- so a rewrite that
+        re-clusters events doesn't silently drop the operator's
+        "mark for report" or "hide from report" decisions.
         """
         events_by_id = {e.id: e for e in events if e.id is not None}
         out: list[DraftStep] = []
@@ -184,6 +224,14 @@ class StepRewriter:
             else:
                 action = item.action
                 result = item.result
+            evidentiary = any(
+                flag_by_event_id.get(eid, _StepFlags()).evidentiary
+                for eid in item.source_event_ids
+            )
+            suppressed = any(
+                flag_by_event_id.get(eid, _StepFlags()).suppressed
+                for eid in item.source_event_ids
+            )
             out.append(
                 DraftStep(
                     id=None,
@@ -193,6 +241,8 @@ class StepRewriter:
                     source_event_ids=item.source_event_ids,
                     screenshot_id=screenshot_id,
                     manual_edit=preserved is not None,
+                    evidentiary=evidentiary,
+                    suppressed=suppressed,
                 )
             )
         return out

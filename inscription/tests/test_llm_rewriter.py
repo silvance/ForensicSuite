@@ -255,3 +255,168 @@ def test_rewriter_surfaces_retry_failure(tmp_path) -> None:
         assert len(client.calls) == 2  # original + one retry, no third
     finally:
         repo.close()
+
+
+# --------------------------------------------------- evidentiary/suppressed
+
+
+def _seed_three_clicks(repo: SessionRepository) -> tuple[int, int, int]:
+    """Three click events sharing one resolved element. Returns event ids."""
+    resolved = repo.add_resolved_element(
+        ResolvedElement(
+            id=None, name="Save", control_type="Button", confidence=0.9, method="uia"
+        )
+    )
+    ids = []
+    for x in (1, 2, 3):
+        ev = repo.append_event(
+            kind=EventKind.CLICK,
+            occurred_at=utcnow(),
+            button="left",
+            x=x,
+            y=1,
+            window_title="Notepad",
+            process_name="notepad.exe",
+            resolved_element_id=resolved.id,
+        )
+        assert ev.id is not None
+        ids.append(ev.id)
+    return ids[0], ids[1], ids[2]
+
+
+def test_rewriter_preserves_evidentiary_across_exact_match(tmp_path) -> None:
+    """A step the user marked evidentiary must stay evidentiary even
+    when the LLM rewrites it with the same source_event_ids tuple.
+
+    Before the fix, _materialise dropped the flag because the rewriter
+    constructed new DraftStep objects with no evidentiary= arg, so they
+    defaulted to False -- silently removing the step from the
+    downstream report after every rewrite.
+    """
+    repo = SessionRepository.create(workspace_root=tmp_path, name="EvidStay")
+    try:
+        eid = _seed_one_click(repo)
+        generate_steps(repo)
+        initial = repo.list_steps()[0]
+        assert initial.id is not None
+        repo.set_step_evidentiary(initial.id, evidentiary=True)
+
+        content = json.dumps({
+            "steps": [
+                {"action": "Rewritten.", "result": "", "source_event_ids": [eid]}
+            ]
+        })
+        steps = StepRewriter(repository=repo, client=_FakeClient(content)).rewrite()
+
+        assert len(steps) == 1
+        assert steps[0].evidentiary is True
+
+
+    finally:
+        repo.close()
+
+
+def test_rewriter_preserves_suppressed_across_exact_match(tmp_path) -> None:
+    """Same as above but for suppressed: a suppressed step must stay
+    suppressed across a rewrite, or it resurrects into the report."""
+    repo = SessionRepository.create(workspace_root=tmp_path, name="SuppStay")
+    try:
+        eid = _seed_one_click(repo)
+        generate_steps(repo)
+        initial = repo.list_steps()[0]
+        assert initial.id is not None
+        repo.set_step_suppressed(initial.id, suppressed=True)
+
+        content = json.dumps({
+            "steps": [
+                {"action": "Rewritten.", "result": "", "source_event_ids": [eid]}
+            ]
+        })
+        # include_suppressed=True so list_steps surfaces the suppressed
+        # row -- a rewrite that loses the flag would re-surface it
+        # under the default filter.
+        steps = StepRewriter(repository=repo, client=_FakeClient(content)).rewrite()
+        assert len(steps) == 1
+        assert steps[0].suppressed is True
+    finally:
+        repo.close()
+
+
+def test_rewriter_propagates_evidentiary_when_llm_splits_step(tmp_path) -> None:
+    """If the LLM splits one user-flagged step into two, both halves
+    inherit the flag.
+
+    Mirrors the OR-on-split behaviour storage.split_step uses for
+    manual splits -- a forensic decision the operator made about a
+    cluster of events must reach every event in that cluster, not just
+    the first half.
+    """
+    repo = SessionRepository.create(workspace_root=tmp_path, name="EvidSplit")
+    try:
+        e1, e2, _e3 = _seed_three_clicks(repo)
+        generate_steps(repo)
+        initial = repo.list_steps()[0]
+        assert initial.id is not None
+        # Step covers e1, e2, e3 -- mark the whole thing evidentiary.
+        repo.set_step_evidentiary(initial.id, evidentiary=True)
+
+        # LLM rewrites into two steps, splitting the cluster.
+        content = json.dumps({
+            "steps": [
+                {"action": "First half.", "result": "", "source_event_ids": [e1]},
+                {"action": "Second half.", "result": "", "source_event_ids": [e2]},
+            ]
+        })
+        steps = StepRewriter(repository=repo, client=_FakeClient(content)).rewrite()
+
+        assert len(steps) == 2
+        assert all(s.evidentiary for s in steps)
+    finally:
+        repo.close()
+
+
+def test_rewriter_unions_flags_when_llm_merges_steps(tmp_path) -> None:
+    """If the LLM merges two user-flagged steps into one, the merged
+    step inherits both flags (OR across all source events).
+
+    Mirrors merge_steps' "union the flags" behaviour: combining
+    forensic annotations should be additive, never lossy.
+    """
+    from inscription.model import DraftStep  # noqa: PLC0415
+
+    repo = SessionRepository.create(workspace_root=tmp_path, name="FlagsMerge")
+    try:
+        e1, e2, _e3 = _seed_three_clicks(repo)
+        # Skip generate_steps -- it collapses our identical clicks
+        # into a single row. Plant two distinct draft steps directly
+        # so we can exercise the rewriter's flag-union logic.
+        repo.replace_steps([
+            DraftStep(
+                id=None,
+                sequence=0,
+                action="First",
+                source_event_ids=(e1,),
+                evidentiary=True,
+            ),
+            DraftStep(
+                id=None,
+                sequence=0,
+                action="Second",
+                source_event_ids=(e2,),
+                suppressed=True,
+            ),
+        ])
+
+        # LLM proposes a single merged step covering both clusters.
+        content = json.dumps({
+            "steps": [
+                {"action": "All in one.", "result": "", "source_event_ids": [e1, e2]}
+            ]
+        })
+        steps = StepRewriter(repository=repo, client=_FakeClient(content)).rewrite()
+
+        assert len(steps) == 1
+        assert steps[0].evidentiary is True
+        assert steps[0].suppressed is True
+    finally:
+        repo.close()
