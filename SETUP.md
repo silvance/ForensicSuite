@@ -16,8 +16,33 @@ This repo contains three tools that share a tiny common package:
 
 ## Quick start (one shared venv)
 
-Open **InscriptionClaude.code-workspace** in VS Code, then run these commands
-from the **repo root** in a PowerShell terminal:
+Two paths -- the bootstrap script if you want it done for you, or the
+manual commands if you want to understand each step.
+
+### Option A: bootstrap script (recommended)
+
+Open the repo root in a PowerShell terminal and run:
+
+```powershell
+.\bootstrap.ps1
+.venv\Scripts\Activate.ps1
+```
+
+That's it. The script checks Python 3.12+, creates `.venv`, installs
+all four packages in the right order, and imports each one to confirm
+the install worked. Re-run any time to refresh the editable installs.
+
+POSIX equivalent (Linux / macOS / WSL):
+
+```bash
+./bootstrap.sh
+source .venv/bin/activate
+```
+
+### Option B: manual
+
+Open **InscriptionClaude.code-workspace** in VS Code, then run these
+commands from the **repo root** in a PowerShell terminal:
 
 ```powershell
 # 1. Create and activate the shared virtual environment
