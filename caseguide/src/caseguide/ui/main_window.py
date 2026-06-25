@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from suite_common import read_version_info
+from suite_common.ui.export_success import show_export_complete
 
 from caseguide import __version__
 from caseguide.config import Config
@@ -340,7 +341,18 @@ class MainWindow(QMainWindow):
             return
         target = self._controller.export_markdown(doc)
         if target is not None:
+            # Mirror the per-status-bar message in a confirmation
+            # dialog with a "Show in folder" button -- the status bar
+            # message fades after a few seconds, and operators
+            # frequently need to find the file in Explorer right
+            # afterwards. Both still fire so the status bar acts as
+            # a no-modal-required reminder once dismissed.
             self.statusBar().showMessage(f"Exported markdown checklist to {target}.")
+            show_export_complete(
+                self,
+                label=f"Exported {len(doc.suggestions)} suggestion(s) as Markdown.",
+                path=target,
+            )
 
     def _on_refine(self) -> None:
         case = self._controller.current_case()

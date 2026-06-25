@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from suite_common import show_error
 
 from caseguide import __version__
 from caseguide.case_reader import CaseReadError, read_case
@@ -83,7 +84,12 @@ class CaseGuideController(QObject):
         try:
             handle = read_case(case_dir)
         except CaseReadError as exc:
-            QMessageBox.warning(self._parent_widget, "Open failed", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Open failed",
+                what="open the case",
+                exc=exc,
+            )
             return False
         self._case = handle
         self._case_dir = case_dir
@@ -95,7 +101,12 @@ class CaseGuideController(QObject):
         try:
             doc = read_suggestions(case_dir)
         except StorageError as exc:
-            QMessageBox.warning(self._parent_widget, "Suggestions read failed", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Suggestions read failed",
+                what="read the suggestions",
+                exc=exc,
+            )
             doc = None
         self.suggestions_loaded.emit(doc)
         return True
@@ -158,7 +169,13 @@ class CaseGuideController(QObject):
             write_suggestions(self._case_dir, bumped)
         except StorageError as exc:
             logger.exception("Save failed")
-            QMessageBox.critical(self._parent_widget, "Save failed", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Save failed",
+                what="save the suggestions",
+                exc=exc,
+                critical=True,
+            )
             return False
         return True
 
@@ -212,10 +229,12 @@ class CaseGuideController(QObject):
             path.write_text(text, encoding="utf-8")
         except OSError as exc:
             logger.exception("Markdown export failed")
-            QMessageBox.critical(
+            show_error(
                 self._parent_widget,
-                "Export failed",
-                f"Could not write {path}: {exc}",
+                title="Export failed",
+                what=f"export the checklist to {path.name}",
+                exc=exc,
+                critical=True,
             )
             return None
         return path

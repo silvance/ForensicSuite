@@ -1,7 +1,10 @@
 """Shared bits for the Inscription / CaseForge / CaseGuide suite.
 
-Four halves now:
+Five halves now:
 
+- :mod:`suite_common.atomic` — crash-safe temp+rename+fsync writer
+  used by every persistent JSON / HTML / Markdown / manifest path in
+  the suite.
 - :mod:`suite_common.llm` — OpenAI-compatible chat-completions client used
   by Inscription's step rewriter and CaseGuide's suggestions refiner.
 - :mod:`suite_common.coerce` — JSON-tolerant coercion helpers used by every
@@ -14,6 +17,7 @@ Four halves now:
   ~/.local/share decision.
 """
 
+from suite_common.atomic import atomic_write_text
 from suite_common.bundle import bundle_root, read_version_info
 from suite_common.coerce import (
     coerce_bool,
@@ -22,6 +26,12 @@ from suite_common.coerce import (
     parse_optional_iso,
     string_list,
 )
+from suite_common.llm_parse import (
+    extract_first_json_object,
+    parse_json_lenient,
+    strip_code_fences,
+)
+from suite_common.errors import friendly_storage_error, show_error
 from suite_common.llm import (
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_MODEL,
@@ -48,14 +58,20 @@ __all__ = [
     "LLMError",
     "LLMRequestError",
     "LLMResponseError",
+    "atomic_write_text",
     "bundle_root",
     "coerce_bool",
     "coerce_int",
     "default_data_root",
     "ensure_dirs",
+    "extract_first_json_object",
+    "friendly_storage_error",
     "list_available_models",
+    "show_error",
     "parse_iso",
+    "parse_json_lenient",
     "parse_optional_iso",
     "read_version_info",
+    "strip_code_fences",
     "string_list",
 ]

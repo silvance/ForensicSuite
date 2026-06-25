@@ -12,6 +12,8 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from suite_common.atomic import atomic_write_text
+
 from inscription.model import SCHEMA_VERSION, SessionManifest
 
 if TYPE_CHECKING:
@@ -30,9 +32,7 @@ def write_manifest(path: Path, manifest: SessionManifest) -> None:
         "schema_version": manifest.schema_version,
         "tags": manifest.tags,
     }
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_text(path, json.dumps(data, indent=2) + "\n")
 
 
 def read_manifest(path: Path) -> SessionManifest:

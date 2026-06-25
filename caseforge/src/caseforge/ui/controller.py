@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QFileDialog, QMessageBox
+from suite_common import show_error
 
 from caseforge import __version__
 from caseforge.config import Config
@@ -104,11 +105,22 @@ class CaseController(QObject):
         try:
             path = create_case(workspace_root=self.workspace_root(), case=case)
         except CaseAlreadyExistsError as exc:
-            QMessageBox.warning(self._parent_widget, "Case exists", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Case exists",
+                what="create the case",
+                exc=exc,
+            )
             return None
         except StorageError as exc:
             logger.exception("Failed to create case")
-            QMessageBox.critical(self._parent_widget, "Create failed", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Create failed",
+                what="create the case",
+                exc=exc,
+                critical=True,
+            )
             return None
         self._open(case=case, case_dir=path)
         self.cases_changed.emit()
@@ -118,7 +130,12 @@ class CaseController(QObject):
         try:
             case = read_case(case_dir)
         except StorageError as exc:
-            QMessageBox.warning(self._parent_widget, "Open failed", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Open failed",
+                what="open the case",
+                exc=exc,
+            )
             return False
         self._open(case=case, case_dir=case_dir)
         self.cases_changed.emit()
@@ -152,7 +169,12 @@ class CaseController(QObject):
             archive_case(case_dir)
         except StorageError as exc:
             logger.exception("Archive failed")
-            QMessageBox.warning(self._parent_widget, "Archive failed", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Archive failed",
+                what="archive the case",
+                exc=exc,
+            )
             return False
         self._forget_case(case_dir)
         self.cases_changed.emit()
@@ -166,7 +188,12 @@ class CaseController(QObject):
             delete_case(case_dir)
         except StorageError as exc:
             logger.exception("Delete failed")
-            QMessageBox.warning(self._parent_widget, "Delete failed", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Delete failed",
+                what="delete the case",
+                exc=exc,
+            )
             return False
         self._forget_case(case_dir)
         self.cases_changed.emit()
@@ -191,7 +218,13 @@ class CaseController(QObject):
             write_case(self._case_dir, bumped)
         except StorageError as exc:
             logger.exception("Failed to save case")
-            QMessageBox.critical(self._parent_widget, "Save failed", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Save failed",
+                what="save the case",
+                exc=exc,
+                critical=True,
+            )
             return False
         self._case = bumped
         self.case_opened.emit(bumped)

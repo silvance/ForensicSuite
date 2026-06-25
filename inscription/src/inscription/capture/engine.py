@@ -158,6 +158,7 @@ class CaptureEngine:
         resolver_factory: Callable[[ForegroundInspector], ElementResolver],
         queue_maxsize: int = 256,
         own_pid: int | None = None,
+        on_sink_error: Callable[[CaptureSink, BaseException], None] | None = None,
     ) -> None:
         self._foreground_factory = foreground_factory
         self._resolver_factory = resolver_factory
@@ -173,6 +174,17 @@ class CaptureEngine:
         # step, and those clicks are noise, not part of the workflow.
         # Markers are explicitly exempt because they are user-intent.
         self._own_pid = own_pid if own_pid is not None else os.getpid()
+        # Sink-failure observability. The previous behaviour was to log
+        # the exception and continue, which masked persistent failures
+        # of critical sinks (e.g. SessionSink wedging on a disk-full
+        # error meant the operator kept clicking with zero events
+        # actually landing in the DB). The counter and optional
+        # callback let the controller surface "recording is broken"
+        # to the UI; the engine itself stays best-effort because some
+        # sinks (LiveStepGenerator) are non-critical and shouldn't
+        # stop capture on a transient failure.
+        self._sink_failure_count = 0
+        self._on_sink_error = on_sink_error
 
     # -------------------------------------------------------- sinks/sources
 
@@ -199,6 +211,20 @@ class CaptureEngine:
                 src.stop()
             except Exception as exc:
                 logger.warning("Error stopping source %r: %s", src, exc)
+
+    # -------------------------------------------------------- observability
+
+    @property
+    def sink_failure_count(self) -> int:
+        """Monotonic count of sink.handle() exceptions across this engine.
+
+        Useful for the controller to assert "recording is healthy" --
+        a non-zero count after a few seconds of capture means at least
+        one sink has been raising. Reads are unsynchronised because
+        Python int reads are atomic, but the value is incremented
+        under ``self._lock`` so concurrent failures don't drop counts.
+        """
+        return self._sink_failure_count
 
     # -------------------------------------------------------- lifecycle
 
@@ -348,5 +374,17 @@ class CaptureEngine:
         for sink in sinks:
             try:
                 sink.handle(enriched)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Sink %r failed", sink)
+                with self._lock:
+                    self._sink_failure_count += 1
+                callback = self._on_sink_error
+                if callback is not None:
+                    # Wrap the callback so a faulty handler can't crash
+                    # the capture loop -- the whole point of an error
+                    # callback is observability, not a new way to
+                    # break recording.
+                    try:
+                        callback(sink, exc)
+                    except Exception:
+                        logger.exception("on_sink_error callback raised; ignoring")
