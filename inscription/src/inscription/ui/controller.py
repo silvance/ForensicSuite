@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QWidget,
 )
+from suite_common import show_error
 
 from inscription import __version__
 from inscription.capture import (
@@ -347,7 +348,12 @@ class SessionController(QObject):
         try:
             repo = SessionRepository.open_existing(workspace_root=self._workspace_root(), slug=slug)
         except SessionLockedError as exc:
-            QMessageBox.warning(self._parent_widget, "Session locked", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Session locked",
+                what="open the session",
+                exc=exc,
+            )
             return
         except Exception:
             logger.exception("Failed to open session %s", slug)
@@ -368,7 +374,12 @@ class SessionController(QObject):
                 recorder_version=__version__,
             )
         except SessionAlreadyExistsError as exc:
-            QMessageBox.warning(self._parent_widget, "Session exists", str(exc))
+            show_error(
+                self._parent_widget,
+                title="Session exists",
+                what="create the session",
+                exc=exc,
+            )
             return
         except Exception:
             logger.exception("Failed to create session %s", name)
