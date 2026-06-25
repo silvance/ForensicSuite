@@ -1,11 +1,10 @@
-"""Shared pytest configuration.
+"""Pytest configuration for Inscription's test suite.
 
-Forces Qt to use the offscreen platform plugin for headless CI runs. Must run
-before any test module imports PySide6 widget classes.
+Force-Qt-offscreen lives in suite_common so all four test runs share
+the same setup; this conftest is intentionally thin so additions
+here stay app-specific.
 """
 
 from __future__ import annotations
 
-import os
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import suite_common.testing.qt_offscreen  # noqa: F401 - sets QT_QPA_PLATFORM at import
