@@ -26,6 +26,7 @@ from suite_common.coerce import (
     parse_optional_iso,
     string_list,
 )
+from suite_common.errors import friendly_storage_error, show_error
 from suite_common.llm import (
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_MODEL,
@@ -58,7 +59,9 @@ __all__ = [
     "coerce_int",
     "default_data_root",
     "ensure_dirs",
+    "friendly_storage_error",
     "list_available_models",
+    "show_error",
     "parse_iso",
     "parse_optional_iso",
     "read_version_info",
