@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox
+from suite_common.ui.export_success import show_export_complete
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -108,10 +109,10 @@ def run_export(
             f"Inscription could not export the guide as {kind}. See logs for details.",
         )
         return
-    QMessageBox.information(
+    show_export_complete(
         parent,
-        "Export complete",
-        f"Exported to:\n{doc.path}",
+        label=f"Exported as {kind}.",
+        path=doc.path,
     )
     if on_complete is not None:
         on_complete()

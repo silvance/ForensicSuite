@@ -31,6 +31,7 @@ from suite_common.llm_parse import (
     parse_json_lenient,
     strip_code_fences,
 )
+from suite_common.errors import friendly_storage_error, show_error
 from suite_common.llm import (
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_MODEL,
@@ -64,7 +65,9 @@ __all__ = [
     "default_data_root",
     "ensure_dirs",
     "extract_first_json_object",
+    "friendly_storage_error",
     "list_available_models",
+    "show_error",
     "parse_iso",
     "parse_json_lenient",
     "parse_optional_iso",
