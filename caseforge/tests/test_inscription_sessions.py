@@ -160,3 +160,42 @@ def test_missing_optional_fields_get_safe_defaults(tmp_path: Path) -> None:
     assert sessions[0].event_count == 0
     assert sessions[0].step_count == 0
     assert sessions[0].ended_at is None
+
+
+def test_ordering_is_by_started_at_not_filesystem_name(tmp_path: Path) -> None:
+    """A lexicographically-later slug with an earlier started_at must
+    sort below a lex-earlier slug with a later started_at.
+
+    Documents the contract: directory iteration order is meaningless,
+    the final sort on ``started_at`` is the only ordering guarantee.
+    Guards against accidentally relying on ``sorted(iterdir())`` -- if
+    someone re-introduces a pre-sort or changes the sort key, this
+    test still passes the explicit-ordering case but their change
+    becomes visible in code review.
+    """
+    _write_manifest(
+        tmp_path,
+        slug="zzz-old-session",  # sorts last alphabetically
+        payload={
+            "name": "Old",
+            "started_at": _ts("2026-01-01T06:00:00+00:00"),
+            "ended_at": _ts("2026-01-01T06:05:00+00:00"),
+            "event_count": 1,
+            "step_count": 1,
+        },
+    )
+    _write_manifest(
+        tmp_path,
+        slug="aaa-new-session",  # sorts first alphabetically
+        payload={
+            "name": "New",
+            "started_at": _ts("2026-06-01T10:00:00+00:00"),
+            "ended_at": _ts("2026-06-01T10:05:00+00:00"),
+            "event_count": 2,
+            "step_count": 2,
+        },
+    )
+    sessions = list_inscription_sessions(tmp_path)
+    # Newest started_at first regardless of slug ordering.
+    assert sessions[0].slug == "aaa-new-session"
+    assert sessions[1].slug == "zzz-old-session"
