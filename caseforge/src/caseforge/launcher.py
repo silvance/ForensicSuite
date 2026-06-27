@@ -37,6 +37,19 @@ class LaunchResult:
     tool_label: str = ""
 
 
+#: Bundle-folder name for each module. ``str.capitalize`` is wrong
+#: here -- ``"caseguide".capitalize()`` is ``"Caseguide"``, but the
+#: PyInstaller spec stages the bundle as ``CaseGuide\CaseGuide.exe``.
+#: Windows' case-insensitive filesystem hides the mismatch in
+#: practice, but a case-sensitive volume (Linux, an NTFS volume with
+#: per-folder case-sensitivity enabled) would silently miss the
+#: sibling exe and fall through to ``python -m <module>``.
+_FROZEN_BUNDLE_NAMES = {
+    "inscription": "Inscription",
+    "caseguide": "CaseGuide",
+}
+
+
 def _frozen_sibling_exe(module_name: str) -> Path | None:
     """Find a sibling app's .exe in the air-gapped bundle, if we're frozen.
 
@@ -50,9 +63,11 @@ def _frozen_sibling_exe(module_name: str) -> Path | None:
     """
     if not getattr(sys, "frozen", False):
         return None
+    bundle_name = _FROZEN_BUNDLE_NAMES.get(module_name)
+    if bundle_name is None:
+        return None
     bundle_root = Path(sys.executable).resolve().parent.parent
-    name_cap = module_name.capitalize()
-    candidate = bundle_root / name_cap / f"{name_cap}.exe"
+    candidate = bundle_root / bundle_name / f"{bundle_name}.exe"
     if candidate.is_file():
         return candidate
     return None
