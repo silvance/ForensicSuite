@@ -78,12 +78,21 @@ if [[ ! -f "$VENV_ACTIVATE" && "$SKIP_SETUP" == "0" ]]; then
     write_step "First-run setup: creating .venv (this only happens once)"
 
     bootstrap=""
-    for candidate in python3.12 python3.13 python3 python; do
+    # Candidate list orders newer minors first so a box with 3.14 +
+    # 3.12 picks 3.14. ``python3`` and ``python`` are PATH defaults
+    # that may resolve to whichever 3.x is installed; the version
+    # check below validates them before use.
+    for candidate in python3.14 python3.13 python3.12 python3 python; do
         if command -v "$candidate" >/dev/null 2>&1; then
             ver=$("$candidate" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || echo "")
             if [[ "$ver" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
-                if (( BASH_REMATCH[1] >= 3 && BASH_REMATCH[2] >= 12 )); then
+                # ``major > 3`` so any future 4.x qualifies; equal-major
+                # path requires minor >= 12. The old check
+                # ``major >= 3 && minor >= 12`` would have rejected
+                # 4.0 / 4.1 etc. as "not Python 3.12+".
+                if (( BASH_REMATCH[1] > 3 || ( BASH_REMATCH[1] == 3 && BASH_REMATCH[2] >= 12 ) )); then
                     bootstrap="$candidate"
+                    echo "  Found Python ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} via: $candidate"
                     break
                 fi
             fi
