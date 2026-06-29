@@ -54,7 +54,10 @@ def list_inscription_sessions(case_dir: Path) -> list[InscriptionSession]:
     if not case_dir.exists() or not case_dir.is_dir():
         return []
     sessions: list[InscriptionSession] = []
-    for child in sorted(case_dir.iterdir()):
+    # No pre-sort: the final ``sessions.sort`` below orders by
+    # started_at, so any pre-sorted directory order is wasted CPU and
+    # misleads readers into thinking the directory order matters.
+    for child in case_dir.iterdir():
         if not child.is_dir():
             continue
         manifest_path = child / MANIFEST_FILENAME

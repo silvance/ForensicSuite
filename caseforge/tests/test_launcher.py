@@ -129,3 +129,60 @@ def test_frozen_bundle_with_missing_sibling_falls_through(tmp_path: Path) -> Non
             executable_path="", module_name="inscription", case_dir=tmp_path
         )
     assert cmd[:3] == [str(fake_caseforge), "-m", "inscription"]
+
+
+def test_frozen_bundle_resolves_caseguide_with_correct_case(tmp_path: Path) -> None:
+    """CaseGuide's bundle folder is ``CaseGuide`` (camel-case), not
+    ``Caseguide`` (which ``"caseguide".capitalize()`` would produce).
+
+    Regression: ``_frozen_sibling_exe`` used ``module_name.capitalize()``
+    to derive the folder name. Windows' case-insensitive filesystem
+    hid the mismatch -- ``Caseguide\\Caseguide.exe`` resolved to the
+    real ``CaseGuide\\CaseGuide.exe`` -- but on a case-sensitive
+    volume the launcher would silently fall through to ``python -m``
+    and re-launch CaseForge.exe instead of the real CaseGuide.exe.
+    """
+    bundle_root = tmp_path / "InscriptionSuite-Airgapped"
+    (bundle_root / "CaseForge").mkdir(parents=True)
+    (bundle_root / "CaseGuide").mkdir()
+    fake_caseforge = bundle_root / "CaseForge" / "CaseForge.exe"
+    fake_caseforge.write_bytes(b"")
+    fake_caseguide = bundle_root / "CaseGuide" / "CaseGuide.exe"
+    fake_caseguide.write_bytes(b"")
+
+    with (
+        patch("caseforge.launcher.sys.frozen", create=True, new=True),
+        patch("caseforge.launcher.sys.executable", str(fake_caseforge)),
+        patch("caseforge.launcher.shutil.which", return_value=None),
+    ):
+        cmd = build_command(
+            executable_path="", module_name="caseguide", case_dir=tmp_path
+        )
+    assert cmd[0] == str(fake_caseguide)
+
+
+def test_frozen_bundle_unknown_module_falls_through(tmp_path: Path) -> None:
+    """An unrecognised module name has no entry in the bundle-name
+    map; fall through to ``python -m <module>`` rather than guessing
+    a folder layout we don't actually own.
+
+    This protects against future module names whose capitalisation
+    doesn't follow the obvious pattern -- they need an explicit
+    entry in ``_FROZEN_BUNDLE_NAMES`` to be reachable as a bundled
+    sibling.
+    """
+    bundle_root = tmp_path / "InscriptionSuite-Airgapped"
+    (bundle_root / "CaseForge").mkdir(parents=True)
+    fake_caseforge = bundle_root / "CaseForge" / "CaseForge.exe"
+    fake_caseforge.write_bytes(b"")
+
+    with (
+        patch("caseforge.launcher.sys.frozen", create=True, new=True),
+        patch("caseforge.launcher.sys.executable", str(fake_caseforge)),
+        patch("caseforge.launcher.shutil.which", return_value=None),
+    ):
+        cmd = build_command(
+            executable_path="", module_name="reportbuilder", case_dir=tmp_path
+        )
+    # Falls through to ``python -m reportbuilder``.
+    assert cmd[:3] == [str(fake_caseforge), "-m", "reportbuilder"]
