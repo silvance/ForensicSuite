@@ -75,24 +75,55 @@ $venvPython = Join-Path $venvDir "Scripts\python.exe"
 if (-not (Test-Path $venvActivate) -and -not $SkipSetup) {
     Write-Step "First-run setup: creating .venv (this only happens once)"
 
-    # Find a Python 3.12+ to bootstrap the venv. py.exe is the launcher
-    # the official Python.org installer drops at C:\Windows\py.exe.
+    # Find a Python 3.12+ to bootstrap the venv.
+    #
+    # The previous candidate list hardcoded ``py -3.12`` / ``py -3.13``
+    # as the only effective probes -- ``py -3.14`` was never tried, so
+    # an operator who only had Python 3.14 installed got the misleading
+    # "Python 3.12+ was not found" error even though their interpreter
+    # met the version requirement. Worse, the slice
+    # ``$candidate[1..($candidate.Count - 1)]`` evaluated to a
+    # descending range ``1..0`` for single-element arrays
+    # (``@("python")``), passing ``$null`` as an extra arg to the
+    # probe and silently breaking every PATH-based fallback.
+    #
+    # The new list leads with ``py -3`` (the launcher's "give me the
+    # highest installed 3.x"), which automatically picks up 3.14 /
+    # 3.15 / etc. without per-minor-version entries. The probe
+    # tolerates both single-element ("python") and multi-element
+    # ("py -3.13") candidates by computing extra args via
+    # ``Select-Object -Skip 1`` instead of the broken slice.
+
+    $probe = "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"
     $bootstrap = $null
     foreach ($candidate in @(
-        @("py", "-3.12"),
-        @("py", "-3.13"),
-        @("python3.12"),
-        @("python3"),
-        @("python")
+        ,@("py", "-3"),       # highest 3.x via Python launcher -- 3.14, 3.15, ...
+        ,@("py", "-3.13"),
+        ,@("py", "-3.12"),
+        ,@("python3"),
+        ,@("python3.13"),
+        ,@("python3.12"),
+        ,@("python")          # last because it could be a stray Python 2 install
     )) {
         try {
-            $verRaw = & $candidate[0] $candidate[1..($candidate.Count - 1)] -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2>$null
-            if ($verRaw) {
-                $verParts = ($verRaw.Trim()) -split "\."
-                if ([int]$verParts[0] -ge 3 -and [int]$verParts[1] -ge 12) {
-                    $bootstrap = $candidate
-                    break
-                }
+            $extraArgs = @($candidate | Select-Object -Skip 1)
+            if ($extraArgs.Count -gt 0) {
+                $verRaw = & $candidate[0] @extraArgs -c $probe 2>$null
+            } else {
+                $verRaw = & $candidate[0] -c $probe 2>$null
+            }
+            if (-not $verRaw) { continue }
+            $verParts = ($verRaw.Trim()) -split "\."
+            $major = [int]$verParts[0]
+            $minor = [int]$verParts[1]
+            # ``$minor -ge 12`` alone would reject 3.20 / 3.100 etc.;
+            # check $major > 3 explicitly so any future 4.x also
+            # qualifies (Python's release cadence makes this less of
+            # a fantasy than it sounds).
+            if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 12)) {
+                $bootstrap = $candidate
+                Write-Host "  Found Python $major.$minor via: $($candidate -join ' ')"
+                break
             }
         } catch {
             continue
@@ -108,9 +139,13 @@ double-click Build-Bundle.bat again.
 "@
         exit 1
     }
-    Write-Host "  Bootstrap interpreter: $($bootstrap -join ' ')"
 
-    & $bootstrap[0] $bootstrap[1..($bootstrap.Count - 1)] -m venv $venvDir
+    $bootstrapArgs = @($bootstrap | Select-Object -Skip 1)
+    if ($bootstrapArgs.Count -gt 0) {
+        & $bootstrap[0] @bootstrapArgs -m venv $venvDir
+    } else {
+        & $bootstrap[0] -m venv $venvDir
+    }
     if ($LASTEXITCODE -ne 0) {
         Show-Error -Title "Inscription Suite -- Build Bundle" -Body "Failed to create .venv. See the console window for details."
         exit 1
