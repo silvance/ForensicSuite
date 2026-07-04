@@ -60,6 +60,8 @@ class SessionSink:
                 width=raw.png_width,
                 height=raw.png_height,
                 sha256=event.image_sha256,
+                origin_left=raw.png_left,
+                origin_top=raw.png_top,
             )
             screenshot_id = artifact.id
 

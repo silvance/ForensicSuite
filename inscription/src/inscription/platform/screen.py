@@ -36,12 +36,23 @@ class MonitorInfo:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CapturedImage:
-    """Raw image bytes plus metadata from a single capture."""
+    """Raw image bytes plus metadata from a single capture.
+
+    ``left`` / ``top`` are the captured region's origin in GLOBAL
+    screen coordinates. A secondary monitor to the right of a
+    1920-wide primary has ``left=1920``; one above the primary has a
+    negative ``top``. Consumers that overlay screen-space geometry
+    (UIA bounding rects, click points) onto the image must subtract
+    this origin first — the PNG's pixel (0,0) is (left, top) in
+    screen space, not (0,0).
+    """
 
     png_bytes: bytes
     width: int
     height: int
     monitor_index: int
+    left: int = 0
+    top: int = 0
 
 
 class ScreenCapturer(ABC):
@@ -137,6 +148,8 @@ class MssScreenCapturer(ScreenCapturer):
             width=shot.size[0],
             height=shot.size[1],
             monitor_index=target_index,
+            left=monitors[target_index]["left"],
+            top=monitors[target_index]["top"],
         )
 
     def close(self) -> None:

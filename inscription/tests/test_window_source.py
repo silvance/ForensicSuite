@@ -112,7 +112,7 @@ def test_capture_picks_monitor_under_the_window_center() -> None:
     cap = _RecordingCapturer()
     src = _window_source_with(cap)
     # Window on the "right" monitor (index 2: 1920..3840 x 0..1080).
-    png, _, _ = src._capture(_window_info((2000, 100, 3000, 800)))  # type: ignore[attr-defined]
+    png, _, _, _, _ = src._capture(_window_info((2000, 100, 3000, 800)))  # type: ignore[attr-defined]
     assert cap.last_index == 2
     assert png == b"x"
 
@@ -120,7 +120,7 @@ def test_capture_picks_monitor_under_the_window_center() -> None:
 def test_capture_picks_left_monitor_for_left_window() -> None:
     cap = _RecordingCapturer()
     src = _window_source_with(cap)
-    png, _, _ = src._capture(_window_info((100, 100, 900, 800)))  # type: ignore[attr-defined]
+    png, _, _, _, _ = src._capture(_window_info((100, 100, 900, 800)))  # type: ignore[attr-defined]
     assert cap.last_index == 1
     assert png == b"x"
 
@@ -128,7 +128,7 @@ def test_capture_picks_left_monitor_for_left_window() -> None:
 def test_capture_falls_back_when_rect_is_missing() -> None:
     cap = _RecordingCapturer()
     src = _window_source_with(cap)
-    png, _, _ = src._capture(_info(title="x", hwnd=5))  # type: ignore[attr-defined]
+    png, _, _, _, _ = src._capture(_info(title="x", hwnd=5))  # type: ignore[attr-defined]
     # No rect → primary fallback path.
     assert cap.last_index == 1
     assert png == b"x"

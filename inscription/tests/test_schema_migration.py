@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING
 
-from inscription.model import DraftStep, EventKind, ResolvedElement
+from inscription.model import DraftStep, EventKind, ResolvedElement, utcnow
 from inscription.storage import SessionRepository
 
 if TYPE_CHECKING:
@@ -201,5 +201,57 @@ def test_v1_session_keeps_existing_step_text_as_action(tmp_path: Path) -> None:
         assert len(steps) == 1
         assert steps[0].action == "Original v1 text"
         assert steps[0].result == ""
+    finally:
+        repo.close()
+
+
+def test_v6_screenshot_rows_get_zero_origin_and_new_rows_round_trip(
+    tmp_path: Path,
+) -> None:
+    """v6 -> v7 adds screenshot_artifacts.origin_left / origin_top.
+
+    Legacy rows (captured under the primary-monitor-at-(0,0)
+    assumption) must default to origin (0, 0) so their export crops
+    behave exactly as before; new rows must round-trip a nonzero
+    origin so secondary-monitor crops can translate screen-space
+    rects into image space.
+    """
+    _build_v1_session(tmp_path, "Legacy-Screens")
+
+    # Pre-seed a screenshot row in the pre-v7 shape.
+    db_path = tmp_path / "Legacy-Screens" / "session.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO screenshot_artifacts "
+            "(relative_path, captured_at, width, height) "
+            "VALUES ('screenshots/old.png', '2026-04-24T00:00:00+00:00', 800, 600)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    repo = SessionRepository.open_existing(workspace_root=tmp_path, slug="Legacy-Screens")
+    try:
+        legacy = repo.list_screenshots()[0]
+        assert legacy.origin_left == 0
+        assert legacy.origin_top == 0
+
+        fresh = repo.add_screenshot(
+            relative_path="screenshots/second-monitor.png",
+            captured_at=utcnow(),
+            width=800,
+            height=600,
+            sha256="abc",
+            origin_left=1920,
+            origin_top=-120,
+        )
+        assert fresh.origin_left == 1920
+        assert fresh.origin_top == -120
+        reloaded = [
+            s for s in repo.list_screenshots() if s.id == fresh.id
+        ]
+        assert reloaded[0].origin_left == 1920
+        assert reloaded[0].origin_top == -120
     finally:
         repo.close()

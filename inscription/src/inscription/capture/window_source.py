@@ -130,7 +130,9 @@ class WindowFocusSource(CaptureSource):
         if previous is None:
             return
         self._announce_process_if_new(engine, info)
-        png, w, h = self._capture(info) if self._auto_screenshot else (None, 0, 0)
+        png, w, h, ox, oy = (
+            self._capture(info) if self._auto_screenshot else (None, 0, 0, 0, 0)
+        )
         engine.submit(
             RawCaptureEvent(
                 kind=EventKind.WINDOW_FOCUS,
@@ -138,6 +140,8 @@ class WindowFocusSource(CaptureSource):
                 png_bytes=png,
                 png_width=w,
                 png_height=h,
+                png_left=ox,
+                png_top=oy,
             )
         )
 
@@ -171,21 +175,25 @@ class WindowFocusSource(CaptureSource):
             )
         )
 
-    def _capture(self, info: ForegroundInfo) -> tuple[bytes | None, int, int]:
+    def _capture(
+        self, info: ForegroundInfo
+    ) -> tuple[bytes | None, int, int, int, int]:
         """Capture the monitor holding ``info``'s window.
 
         Without this, ``mss`` defaults to monitor 1 — which on many Windows
         multi-monitor setups is *not* the display the window is on. We use
-        the window rect's center to pick the right monitor.
+        the window rect's center to pick the right monitor. The trailing
+        pair in the return tuple is the captured monitor's global-screen
+        origin (see :class:`CapturedImage`).
         """
         if self._screen is None:  # pragma: no cover - defensive
-            return None, 0, 0
+            return None, 0, 0, 0, 0
         try:
             image = self._grab_for(info)
         except Exception:
             logger.exception("Screenshot failed on window focus")
-            return None, 0, 0
-        return image.png_bytes, image.width, image.height
+            return None, 0, 0, 0, 0
+        return image.png_bytes, image.width, image.height, image.left, image.top
 
     def _grab_for(self, info: ForegroundInfo) -> CapturedImage:
         assert self._screen is not None
