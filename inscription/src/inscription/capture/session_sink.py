@@ -5,11 +5,21 @@ inserts a ``resolved_elements`` row (when a click resolved something), and
 finally inserts the ``raw_events`` row that references them.
 
 Screenshot filenames are derived from the event's ``processed_at``
-timestamp with microsecond precision. The engine worker processes events
-serially and each ``mss.grab`` takes milliseconds, so two events cannot
-land in the same microsecond. That makes filenames unique without a
-sink-local counter that has to be seeded correctly across recording
-restarts.
+timestamp with microsecond precision, plus a collision suffix: grabs
+happen on the SOURCE threads (click listener, window poll), so two
+events queued concurrently can carry timestamps closer together than
+the enrichment time between the worker's ``utcnow()`` stamps -- and a
+clock step-back (NTP) can repeat a microsecond outright. A silent
+``write_bytes`` overwrite would destroy one event's visual evidence
+while leaving two DB rows pointing at one file; the suffix loop makes
+that impossible.
+
+Failure ordering: the raw event row is the evidentiary core, so a
+failed screenshot write/insert no longer aborts the whole persist --
+the event is saved without its image and the failure is logged. (The
+reverse window -- append_event failing after the screenshot row
+committed -- leaves an orphaned artifact row; harmless, no event
+references it, and integrity verify still passes it.)
 """
 
 from __future__ import annotations
@@ -19,6 +29,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from datetime import datetime
+    from pathlib import Path
 
     from inscription.capture.engine import EnrichedEvent
     from inscription.storage import SessionRepository
@@ -27,11 +38,31 @@ logger = logging.getLogger(__name__)
 
 
 def _filename_for(processed_at: datetime) -> str:
-    """Return a sortable, collision-resistant PNG filename.
+    """Return a sortable PNG filename (uniquified by the caller).
 
     Example: ``event-20260424T072150-123456.png``.
     """
     return "event-" + processed_at.strftime("%Y%m%dT%H%M%S-%f") + ".png"
+
+
+def _unique_target(directory: Path, filename: str) -> Path:
+    """Return a path in ``directory`` that does not exist yet.
+
+    Appends ``-1``, ``-2``, ... before the extension on collision.
+    Two events can share a ``processed_at`` microsecond (concurrent
+    source-thread grabs, NTP step-back); overwriting would silently
+    destroy the earlier event's screenshot.
+    """
+    candidate = directory / filename
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    n = 1
+    while True:
+        candidate = directory / f"{stem}-{n}.png"
+        if not candidate.exists():
+            return candidate
+        n += 1
 
 
 class SessionSink:
@@ -50,6 +81,29 @@ class SessionSink:
 
         screenshot_id: int | None = None
         if raw.png_bytes:
+            # A screenshot failure must not take the event down with
+            # it: the raw event row is the evidentiary core. Persist
+            # the event without its image rather than losing both.
+            try:
+                shots_dir = self._repo.session.root / "screenshots"
+                shots_dir.mkdir(parents=True, exist_ok=True)
+                target = _unique_target(
+                    shots_dir, _filename_for(event.processed_at)
+                )
+                relative = f"screenshots/{target.name}"
+                target.write_bytes(raw.png_bytes)
+                artifact = self._repo.add_screenshot(
+                    relative_path=relative,
+                    captured_at=event.processed_at,
+                    width=raw.png_width,
+                    height=raw.png_height,
+                    sha256=event.image_sha256,
+                )
+                screenshot_id = artifact.id
+            except OSError:
+                logger.exception(
+                    "Screenshot persist failed; saving event without image"
+                )
             relative = f"screenshots/{_filename_for(event.processed_at)}"
             target = self._repo.session.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
