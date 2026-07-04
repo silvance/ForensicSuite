@@ -77,7 +77,9 @@ def _counts_line(result: IntegrityResult) -> str:
     return (
         f"{result.total_checked} screenshot(s) checked · "
         f"{result.ok} OK · {len(result.mismatched)} mismatched · "
-        f"{len(result.missing)} missing · {len(result.unhashed)} unhashed"
+        f"{len(result.missing)} missing · "
+        f"{len(result.unreadable)} unreadable · "
+        f"{len(result.unhashed)} unhashed"
     )
 
 
@@ -93,6 +95,14 @@ def _detail_text(result: IntegrityResult) -> str:
     if result.missing:
         lines = ["MISSING (file no longer on disk):"]
         lines.extend(f"  {path}" for path in result.missing)
+        sections.append("\n".join(lines))
+    if result.unreadable:
+        lines = [
+            "UNREADABLE (on disk but could not be read — permissions, "
+            "another program holding the file, or a disk error; "
+            "integrity NOT verified):"
+        ]
+        lines.extend(f"  {path}" for path in result.unreadable)
         sections.append("\n".join(lines))
     if result.unhashed:
         lines = ["UNHASHED (no SHA-256 was recorded — likely a legacy session):"]

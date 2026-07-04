@@ -1,16 +1,19 @@
-"""Integrity verification: clean / mismatched / missing / unhashed."""
+"""Integrity verification: clean / mismatched / missing / unreadable / unhashed."""
 
 from __future__ import annotations
 
 import hashlib
 from typing import TYPE_CHECKING
 
+from inscription import verify as verify_module
 from inscription.model import utcnow
 from inscription.storage import SessionRepository
 from inscription.verify import verify_session_integrity
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 def _stage_screenshot(repo: SessionRepository, *, name: str, body: bytes) -> str:
@@ -146,3 +149,68 @@ def test_verify_no_progress_callback_when_omitted(tmp_path: Path) -> None:
         assert result.total_checked == 0
     finally:
         repo.close()
+
+
+# ------------------------------------------------------- unreadable files
+
+
+def test_verify_classifies_unreadable_file_and_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One unreadable file must NOT abort the scan.
+
+    Regression: _hash_file's open() raced against the exists() check --
+    a file locked by antivirus / Explorer preview (common on Windows),
+    or deleted mid-scan, raised OSError and aborted the ENTIRE
+    integrity check. The operator saw a scan-wide error dialog instead
+    of a verdict on the other N-1 screenshots plus a pointer at the
+    one file that couldn't be read.
+    """
+    repo = SessionRepository.create(workspace_root=tmp_path, name="Unreadable")
+    try:
+        _stage_screenshot(repo, name="good.png", body=b"fine")
+        locked_rel = _stage_screenshot(repo, name="locked.png", body=b"locked")
+        _stage_screenshot(repo, name="also-good.png", body=b"also fine")
+
+        real_hash_file = verify_module._hash_file
+
+        def _hash_or_lock(path: Path) -> str:
+            if path.name == "locked.png":
+                msg = "The process cannot access the file"
+                raise OSError(msg)
+            return real_hash_file(path)
+
+        monkeypatch.setattr(verify_module, "_hash_file", _hash_or_lock)
+        result = verify_session_integrity(repo)
+    finally:
+        repo.close()
+
+    # Scan completed: both readable files got verdicts.
+    assert result.ok == 2
+    assert result.unreadable == [locked_rel]
+    assert not result.mismatched
+    assert not result.missing
+
+
+def test_unreadable_file_is_not_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unverified file must never render as a clean report.
+
+    'We couldn't check' and 'we checked and it matches' are different
+    forensic statements; is_clean collapsing them would let a locked
+    (possibly tampered) file hide behind a green checkmark.
+    """
+    repo = SessionRepository.create(workspace_root=tmp_path, name="NotClean")
+    try:
+        _stage_screenshot(repo, name="locked.png", body=b"x")
+
+        def _always_locked(_path: Path) -> str:
+            msg = "Permission denied"
+            raise OSError(msg)
+
+        monkeypatch.setattr(verify_module, "_hash_file", _always_locked)
+        result = verify_session_integrity(repo)
+    finally:
+        repo.close()
+
+    assert result.is_clean is False
+    assert len(result.unreadable) == 1

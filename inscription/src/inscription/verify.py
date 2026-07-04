@@ -15,6 +15,11 @@ each:
   or an accidental edit.
 - **missing** — the file was recorded but isn't on disk anymore.
   Usually a moved / deleted asset rather than tampering.
+- **unreadable** — the file is on disk but couldn't be opened or
+  read (permissions, antivirus lock, Explorer preview holding the
+  handle, disk error). Its integrity is UNVERIFIED — treated as a
+  failure, not a warning, because "we couldn't check" must never
+  render as a clean report.
 - **unhashed** — the row predates SHA-256 capture (very early alpha
   databases) or had an empty hash recorded. Reported separately so
   operators can re-hash and pin them.
@@ -56,12 +61,15 @@ class IntegrityResult:
     ok: int
     mismatched: list[MismatchedScreenshot] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    unreadable: list[str] = field(default_factory=list)
     unhashed: list[str] = field(default_factory=list)
 
     @property
     def is_clean(self) -> bool:
-        """True only when every screenshot exists and matches its stored hash."""
-        return not self.mismatched and not self.missing
+        """True only when every screenshot exists, was readable, and
+        matches its stored hash. An unreadable file is unverified, and
+        unverified must never present as clean."""
+        return not self.mismatched and not self.missing and not self.unreadable
 
     @property
     def has_warnings(self) -> bool:
@@ -89,6 +97,7 @@ def verify_session_integrity(
 
     mismatched: list[MismatchedScreenshot] = []
     missing: list[str] = []
+    unreadable: list[str] = []
     unhashed: list[str] = []
     ok = 0
 
@@ -118,17 +127,34 @@ def verify_session_integrity(
             elif not shot.sha256:
                 unhashed.append(shot.relative_path)
             else:
-                actual = _hash_file(path)
-                if actual.lower() == shot.sha256.lower():
-                    ok += 1
-                else:
-                    mismatched.append(
-                        MismatchedScreenshot(
-                            relative_path=shot.relative_path,
-                            expected_sha256=shot.sha256,
-                            actual_sha256=actual,
-                        )
+                # The exists() check above races against the world: the
+                # file can vanish, or (common on Windows) be locked by
+                # antivirus / Explorer preview, or hit a disk error,
+                # between the check and the open inside _hash_file. One
+                # bad file must not abort the whole scan -- the other
+                # N-1 screenshots still deserve a verdict, and the
+                # operator needs to see WHICH file couldn't be checked
+                # rather than a scan-wide error dialog.
+                try:
+                    actual = _hash_file(path)
+                except OSError as exc:
+                    logger.warning(
+                        "Could not read screenshot %s during integrity check: %s",
+                        shot.relative_path,
+                        exc,
                     )
+                    unreadable.append(shot.relative_path)
+                else:
+                    if actual.lower() == shot.sha256.lower():
+                        ok += 1
+                    else:
+                        mismatched.append(
+                            MismatchedScreenshot(
+                                relative_path=shot.relative_path,
+                                expected_sha256=shot.sha256,
+                                actual_sha256=actual,
+                            )
+                        )
 
         if progress_callback is not None:
             progress_callback(i + 1, total)
@@ -138,14 +164,17 @@ def verify_session_integrity(
         ok=ok,
         mismatched=mismatched,
         missing=missing,
+        unreadable=unreadable,
         unhashed=unhashed,
     )
     logger.info(
-        "Integrity check: %d total, %d ok, %d mismatched, %d missing, %d unhashed",
+        "Integrity check: %d total, %d ok, %d mismatched, %d missing, "
+        "%d unreadable, %d unhashed",
         result.total_checked,
         result.ok,
         len(result.mismatched),
         len(result.missing),
+        len(result.unreadable),
         len(result.unhashed),
     )
     return result
