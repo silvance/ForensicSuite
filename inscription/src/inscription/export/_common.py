@@ -52,6 +52,31 @@ logger = logging.getLogger(__name__)
 atomic_write_text = _atomic_write_text
 
 
+def translate_rect_to_image_space(
+    rect: tuple[int, int, int, int] | None,
+    *,
+    origin_left: int,
+    origin_top: int,
+) -> tuple[int, int, int, int] | None:
+    """Shift a global-screen rect into a screenshot's pixel space.
+
+    ``None`` passes through. A rect entirely outside the image after
+    translation still passes through -- ``crop_highlight`` clamps and
+    falls back to the full screenshot for degenerate boxes, which is
+    the right output when the recorded geometry doesn't intersect
+    this monitor at all (e.g. the UIA rect spans a different display
+    than the one captured).
+    """
+    if rect is None:
+        return None
+    return (
+        rect[0] - origin_left,
+        rect[1] - origin_top,
+        rect[2] - origin_left,
+        rect[3] - origin_top,
+    )
+
+
 def select_primary_event(
     step: DraftStep, events_by_id: dict[int, RawEvent]
 ) -> RawEvent | None:
@@ -112,6 +137,21 @@ def stage_step_asset(
         and primary_event.y is not None
         else None
     )
+
+    # UIA bounding rects and click points are GLOBAL screen
+    # coordinates; the screenshot is a single monitor whose pixel
+    # (0,0) sits at (shot.origin_left, shot.origin_top) in that same
+    # global space. Translate before cropping -- without this, a
+    # click on any monitor whose origin isn't (0,0) crops the wrong
+    # region of the image (or silently falls back to the uncropped
+    # screenshot), which in a court exhibit misrepresents what the
+    # examiner clicked. Legacy rows carry origin (0,0) and are
+    # untouched by the subtraction.
+    rect = translate_rect_to_image_space(
+        rect, origin_left=shot.origin_left, origin_top=shot.origin_top
+    )
+    if click is not None:
+        click = (click[0] - shot.origin_left, click[1] - shot.origin_top)
 
     if rect is None:
         try:

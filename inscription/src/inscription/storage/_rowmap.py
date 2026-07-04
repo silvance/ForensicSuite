@@ -96,6 +96,8 @@ def row_to_screenshot(row: sqlite3.Row) -> ScreenshotArtifact:
         height=row["height"],
         sha256=row["sha256"],
         highlight_rect=loads_rect(row["highlight_rect"]),
+        origin_left=row["origin_left"],
+        origin_top=row["origin_top"],
     )
 
 
