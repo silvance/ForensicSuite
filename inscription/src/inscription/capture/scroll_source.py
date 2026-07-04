@@ -33,6 +33,8 @@ except Exception:
     _PYNPUT_AVAILABLE = False
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from inscription.capture.engine import CaptureEngine
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,13 @@ class ScrollSource(CaptureSource):
         self._last_x = 0
         self._last_y = 0
         self._flush_timer: threading.Timer | None = None
+        # Wall-clock time of the FIRST wheel tick in the current burst.
+        # The flushed event is stamped with this, not flush time: the
+        # debounce delays the flush by up to debounce_s after scrolling
+        # stopped, and stamping at flush inverted the timeline -- a
+        # click landing in the quiet window was timestamped BEFORE the
+        # scroll that physically preceded it.
+        self._burst_started_at: datetime | None = None
 
     def start(self, engine: CaptureEngine) -> None:
         self._engine = engine
@@ -83,6 +92,8 @@ class ScrollSource(CaptureSource):
 
     def _on_scroll(self, x: int, y: int, dx: int, dy: int) -> None:
         with self._lock:
+            if self._dx == 0 and self._dy == 0:
+                self._burst_started_at = utcnow()
             self._dx += int(dx)
             self._dy += int(dy)
             self._last_x = int(x)
@@ -104,15 +115,17 @@ class ScrollSource(CaptureSource):
         engine = self._engine
         descriptor = _describe(self._dx, self._dy)
         x, y = self._last_x, self._last_y
+        started_at = self._burst_started_at or utcnow()
         self._dx = 0
         self._dy = 0
+        self._burst_started_at = None
         self._flush_timer = None
         if engine is None:
             return
         engine.submit(
             RawCaptureEvent(
                 kind=EventKind.SCROLL,
-                occurred_at=utcnow(),
+                occurred_at=started_at,
                 x=x,
                 y=y,
                 text=descriptor,

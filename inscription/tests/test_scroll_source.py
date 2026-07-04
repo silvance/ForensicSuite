@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+import inscription.capture.scroll_source as mod
 from inscription.capture.scroll_source import ScrollSource, _describe
 from inscription.model import EventKind
 
@@ -117,3 +119,38 @@ def test_stop_with_no_pending_burst_emits_nothing() -> None:
     src._engine = cast("CaptureEngine", engine)
     src.stop()
     assert engine.events == []
+
+
+def test_scroll_event_is_stamped_at_burst_start(monkeypatch) -> None:
+    """The flushed SCROLL event carries the FIRST tick's timestamp.
+
+    Regression: it was stamped at flush time -- up to debounce_s
+    after scrolling stopped -- so a click landing in the quiet window
+    was timestamped BEFORE the scroll that physically preceded it,
+    inverting the exhibit's timeline.
+    """
+    src = mod.ScrollSource(debounce_s=999)  # never auto-flush
+    submitted = []
+
+    class _Engine:
+        def submit(self, ev):
+            submitted.append(ev)
+            return True
+
+    src._engine = _Engine()
+
+    times = iter(
+        [
+            datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),   # first tick
+            datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC),   # flush-time fallback (unused)
+        ]
+    )
+    monkeypatch.setattr(mod, "utcnow", lambda: next(times))
+
+    src._on_scroll(10, 10, 0, -1)
+    src._on_scroll(10, 12, 0, -1)  # same burst; no new stamp
+    with src._lock:
+        src._flush_locked()
+
+    assert len(submitted) == 1
+    assert submitted[0].occurred_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
