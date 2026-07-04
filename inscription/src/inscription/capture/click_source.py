@@ -92,9 +92,9 @@ class ClickSource(CaptureSource):
         button_name = getattr(button, "name", str(button))
         kind = self._classify(x, y, button_name)
         if self._auto_screenshot:
-            png, w, h = self._capture(int(x), int(y))
+            png, w, h, ox, oy = self._capture(int(x), int(y))
         else:
-            png, w, h = None, 0, 0
+            png, w, h, ox, oy = None, 0, 0, 0, 0
         engine.submit(
             RawCaptureEvent(
                 kind=kind,
@@ -105,6 +105,8 @@ class ClickSource(CaptureSource):
                 png_bytes=png,
                 png_width=w,
                 png_height=h,
+                png_left=ox,
+                png_top=oy,
             )
         )
 
@@ -128,8 +130,13 @@ class ClickSource(CaptureSource):
             self._last_click_button = button_name
             return EventKind.CLICK
 
-    def _capture(self, x: int, y: int) -> tuple[bytes | None, int, int]:
+    def _capture(self, x: int, y: int) -> tuple[bytes | None, int, int, int, int]:
         """Grab a screenshot of whichever monitor holds ``(x, y)``.
+
+        Returns ``(png, width, height, origin_left, origin_top)`` where
+        the origin is the captured monitor's top-left in global screen
+        coordinates — export subtracts it to map UIA rects into image
+        space.
 
         The ``ScreenCapturer`` is created lazily on first click because
         ``mss`` must be owned by the thread that uses it, and pynput's
@@ -141,5 +148,5 @@ class ClickSource(CaptureSource):
             image = self._screen.capture_at(x, y)
         except Exception:
             logger.exception("Screenshot failed on click at (%d, %d)", x, y)
-            return None, 0, 0
-        return image.png_bytes, image.width, image.height
+            return None, 0, 0, 0, 0
+        return image.png_bytes, image.width, image.height, image.left, image.top

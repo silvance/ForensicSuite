@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class EventKind(StrEnum):
@@ -128,6 +128,13 @@ class ScreenshotArtifact:
     height: int
     sha256: str = ""
     highlight_rect: tuple[int, int, int, int] | None = None
+    #: The captured region's top-left in GLOBAL screen coordinates.
+    #: (0, 0) for the primary monitor and for legacy rows that predate
+    #: schema v7. Export subtracts this to translate screen-space UIA
+    #: rects / click points into this image's pixel space -- without
+    #: it, a click on a secondary monitor crops the wrong region.
+    origin_left: int = 0
+    origin_top: int = 0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -39,3 +39,10 @@ class RawCaptureEvent:
     png_bytes: bytes | None = None
     png_width: int = 0
     png_height: int = 0
+    #: Origin of the captured region in GLOBAL screen coordinates.
+    #: Nonzero whenever the grab came from a monitor whose top-left
+    #: isn't the virtual desktop's (0,0) — secondary displays. Export
+    #: needs this to translate screen-space UIA rects / click points
+    #: into image space before cropping.
+    png_left: int = 0
+    png_top: int = 0

@@ -326,13 +326,16 @@ class SessionRepository:
         height: int,
         sha256: str = "",
         highlight_rect: tuple[int, int, int, int] | None = None,
+        origin_left: int = 0,
+        origin_top: int = 0,
     ) -> ScreenshotArtifact:
         with self._transaction(what="add_screenshot"):
             cursor = self._conn.execute(
                 """
                 INSERT INTO screenshot_artifacts
-                    (relative_path, captured_at, width, height, sha256, highlight_rect)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (relative_path, captured_at, width, height, sha256,
+                     highlight_rect, origin_left, origin_top)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     relative_path,
@@ -341,6 +344,8 @@ class SessionRepository:
                     height,
                     sha256,
                     _dumps_rect(highlight_rect),
+                    origin_left,
+                    origin_top,
                 ),
             )
             screenshot_id = cursor.lastrowid
@@ -355,6 +360,8 @@ class SessionRepository:
             height=height,
             sha256=sha256,
             highlight_rect=highlight_rect,
+            origin_left=origin_left,
+            origin_top=origin_top,
         )
 
     def add_resolved_element(self, element: ResolvedElement) -> ResolvedElement:

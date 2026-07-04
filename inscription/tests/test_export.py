@@ -41,6 +41,7 @@ def _seed_click(
     height: int = 1,
     bounding_rect: tuple[int, int, int, int] | None = None,
     click_xy: tuple[int, int] = (1, 1),
+    origin: tuple[int, int] = (0, 0),
 ) -> None:
     shot_dir = repo.session.screenshots_dir
     shot_dir.mkdir(exist_ok=True)
@@ -52,6 +53,8 @@ def _seed_click(
         width=width,
         height=height,
         sha256="abc",
+        origin_left=origin[0],
+        origin_top=origin[1],
     )
     resolved = repo.add_resolved_element(
         ResolvedElement(
@@ -271,3 +274,102 @@ def test_forensic_notes_writes_three_column_table(tmp_path: Path) -> None:
     assert "Result" in text
     # Evidentiary row gets the row class so styling can pick it up.
     assert 'class="evidentiary"' in text
+
+
+# ------------------------------------------------- multi-monitor origins
+
+
+def _png_with_red_block(
+    width: int, height: int, block: tuple[int, int, int, int]
+) -> bytes:
+    """White PNG with a red rectangle at image coords ``block``."""
+    img = Image.new("RGB", (width, height), (255, 255, 255))
+    for px in range(block[0], block[2]):
+        for py in range(block[1], block[3]):
+            img.putpixel((px, py), (255, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _has_red(png_path: Path) -> bool:
+    with Image.open(png_path) as img:
+        rgb = img.convert("RGB")
+        return any(
+            rgb.getpixel((x, y)) == (255, 0, 0)
+            for x in range(rgb.width)
+            for y in range(rgb.height)
+        )
+
+
+def test_export_crop_translates_secondary_monitor_origin(tmp_path: Path) -> None:
+    """A click on a monitor at global x=1920 must crop the RIGHT region.
+
+    Regression: UIA bounding rects are global screen coordinates, but
+    the screenshot is a single monitor whose pixel (0,0) sits at the
+    monitor's global origin. The crop treated screen coords as image
+    coords, so a click at screen x=2000 on a monitor spanning
+    1920..2720 cropped around image x=2000 -- clamped to a sliver of
+    the monitor's right edge, nowhere near the clicked element. The
+    court exhibit showed the wrong UI region.
+
+    Setup: 800x600 "secondary monitor" screenshot with a red block at
+    IMAGE coords (10, 300)-(180, 400). The element's SCREEN rect is
+    (1930, 300, 2100, 400) -- the same block seen through a monitor
+    origin of (1920, 0). A correct crop contains red; the broken one
+    contained only white edge pixels.
+    """
+    repo = SessionRepository.create(workspace_root=tmp_path, name="MultiMon")
+    try:
+        png = _png_with_red_block(800, 600, (10, 300, 180, 400))
+        _seed_click(
+            repo,
+            png_bytes=png,
+            width=800,
+            height=600,
+            bounding_rect=(1930, 300, 2100, 400),
+            click_xy=(2000, 350),
+            origin=(1920, 0),
+        )
+        generate_steps(repo)
+        doc = export_html(repo)
+    finally:
+        repo.close()
+
+    assets = list((doc.path.parent / "assets").iterdir())
+    assert len(assets) == 1
+    staged = assets[0]
+    with Image.open(staged) as img:
+        # A real crop happened (not the full-frame degenerate fallback).
+        assert img.width < 800
+    assert _has_red(staged), (
+        "Cropped exhibit does not contain the clicked element -- "
+        "monitor origin was not subtracted before cropping"
+    )
+
+
+def test_export_crop_unchanged_for_primary_monitor(tmp_path: Path) -> None:
+    """Origin (0,0) -- legacy rows and primary-monitor captures -- is a
+    no-op translation; the crop behaves exactly as before."""
+    repo = SessionRepository.create(workspace_root=tmp_path, name="PrimaryMon")
+    try:
+        png = _png_with_red_block(800, 600, (10, 300, 180, 400))
+        _seed_click(
+            repo,
+            png_bytes=png,
+            width=800,
+            height=600,
+            bounding_rect=(10, 300, 180, 400),
+            click_xy=(90, 350),
+            origin=(0, 0),
+        )
+        generate_steps(repo)
+        doc = export_html(repo)
+    finally:
+        repo.close()
+
+    assets = list((doc.path.parent / "assets").iterdir())
+    staged = assets[0]
+    with Image.open(staged) as img:
+        assert img.width < 800
+    assert _has_red(staged)

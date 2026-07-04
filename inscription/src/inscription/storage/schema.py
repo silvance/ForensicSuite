@@ -55,7 +55,9 @@ CREATE TABLE screenshot_artifacts (
     width           INTEGER NOT NULL,
     height          INTEGER NOT NULL,
     sha256          TEXT    NOT NULL DEFAULT '',
-    highlight_rect  TEXT
+    highlight_rect  TEXT,
+    origin_left     INTEGER NOT NULL DEFAULT 0,  -- capture region's global-screen origin
+    origin_top      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE raw_events (
@@ -136,12 +138,33 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE resolved_elements ADD COLUMN nearby_text TEXT")
 
 
+def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
+    """Add ``screenshot_artifacts.origin_left`` / ``origin_top``.
+
+    Per-monitor screenshots have their pixel (0,0) at the monitor's
+    global-screen origin, but UIA bounding rects and click points are
+    global-screen coordinates. Without the origin stored alongside the
+    image, the export crop treated screen coords as image coords and
+    cropped the WRONG region for any click on a monitor whose origin
+    isn't (0,0). Legacy rows default to 0/0 — the primary-monitor
+    assumption they were captured under, so their behaviour is
+    unchanged.
+    """
+    conn.execute(
+        "ALTER TABLE screenshot_artifacts ADD COLUMN origin_left INTEGER NOT NULL DEFAULT 0"
+    )
+    conn.execute(
+        "ALTER TABLE screenshot_artifacts ADD COLUMN origin_top INTEGER NOT NULL DEFAULT 0"
+    )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v1_to_v2,
     3: _migrate_v2_to_v3,
     4: _migrate_v3_to_v4,
     5: _migrate_v4_to_v5,
     6: _migrate_v5_to_v6,
+    7: _migrate_v6_to_v7,
 }
 
 
