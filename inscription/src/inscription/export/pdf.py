@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QMarginsF, QRectF, QSizeF, Qt, QUrl
-from PySide6.QtGui import QFont, QPainter, QTextDocument
+from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QTextDocument
 from PySide6.QtPrintSupport import QPrinter
 
 from inscription.export.forensic import export_forensic_notes
@@ -140,6 +140,13 @@ def _render_html_to_pdf(
     body_height = body_bottom - body_top
 
     doc = QTextDocument()
+    # Bind the document's layout to the printer BEFORE content is set:
+    # QTextDocument otherwise resolves fonts and image sizes against
+    # the default (screen, ~96 dpi) paint device, while HighResolution
+    # printers paint at ~1200 dpi -- body text and images came out at
+    # roughly 1/12 physical size next to correctly-sized header/footer
+    # bands drawn directly on the printer painter.
+    doc.documentLayout().setPaintDevice(printer)
     # The base URL has to be a "directory URL" (trailing slash) so
     # ``<img src="notes-assets/foo.png">`` in the HTML resolves to
     # ``<base>/notes-assets/foo.png`` rather than the parent.
@@ -151,6 +158,13 @@ def _render_html_to_pdf(
     timestamp = utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
     painter = QPainter(printer)
+    if not painter.isActive():
+        # QPainter.begin() failing (destination locked, path invalid in
+        # a way mkdir didn't catch) turns every draw call into a silent
+        # no-op -- without this check the export "succeeds" and hands
+        # the operator an empty or missing PDF.
+        msg = f"Could not start PDF rendering to {destination}"
+        raise OSError(msg)
     try:
         for page_idx in range(page_count):
             if page_idx > 0:
@@ -226,11 +240,21 @@ def _draw_header_band(
         title_font.setPointSizeF(11)
         painter.setFont(title_font)
         painter.setPen(Qt.GlobalColor.black)
+        # Title gets the left 55%, meta the right 45% -- NON-overlapping
+        # (they previously shared a 10% zone where long titles and long
+        # case references overprinted each other), and both strings are
+        # elided with an ellipsis instead of QPainter's default
+        # mid-glyph clipping. Truncation in a court document must at
+        # least be visible as truncation.
         title_rect = QRectF(rect.left(), rect.top(), rect.width() * 0.55, rect.height())
+        title_metrics = QFontMetricsF(title_font)
+        elided_title = title_metrics.elidedText(
+            session_name, Qt.TextElideMode.ElideRight, title_rect.width()
+        )
         painter.drawText(
             title_rect,
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            session_name,
+            elided_title,
         )
 
         # Right-aligned: examiner | case reference, one or both.
@@ -242,15 +266,21 @@ def _draw_header_band(
             meta_font.setPointSizeF(9)
             painter.setFont(meta_font)
             meta_rect = QRectF(
-                rect.left() + rect.width() * 0.45,
+                rect.left() + rect.width() * 0.55,
                 rect.top(),
-                rect.width() * 0.55,
+                rect.width() * 0.45,
                 rect.height(),
+            )
+            meta_metrics = QFontMetricsF(meta_font)
+            elided_meta = meta_metrics.elidedText(
+                "  ·  ".join(meta_parts),
+                Qt.TextElideMode.ElideRight,
+                meta_rect.width(),
             )
             painter.drawText(
                 meta_rect,
                 int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-                "  ·  ".join(meta_parts),
+                elided_meta,
             )
 
         # Faint separator rule along the bottom of the band.
