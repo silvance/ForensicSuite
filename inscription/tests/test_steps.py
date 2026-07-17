@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from inscription.model import EventKind, ResolvedElement, utcnow
+from inscription.model import DraftStep, EventKind, ResolvedElement, utcnow
 from inscription.steps import StepGenerator, render_step_action
 from inscription.storage import SessionRepository
 
@@ -197,5 +197,141 @@ def test_generator_preserves_manual_edits(tmp_path) -> None:
         assert len(regenerated) == 1
         assert regenerated[0].action == "Click the magical button"
         assert regenerated[0].manual_edit is True
+    finally:
+        repo.close()
+
+
+# -------------------------------------------- clustering-correctness regressions
+
+
+def test_generator_merges_rapid_clicks_across_distinct_resolved_rows(tmp_path) -> None:
+    """Production inserts a FRESH resolved_elements row per click, so two
+    clicks on the same button never share a row id. The dedup key is the
+    element's semantic identity (name/type/window), not the row id --
+    keying on the id made batch click-merging dead code in production.
+    """
+    repo = SessionRepository.create(workspace_root=tmp_path, name="FreshRows")
+    try:
+        t0 = utcnow()
+        for ms in (0, 300):
+            r = repo.add_resolved_element(
+                ResolvedElement(
+                    id=None, name="OK", control_type="Button",
+                    confidence=0.9, method="uia",
+                )
+            )
+            _append_click(repo, when=t0 + timedelta(milliseconds=ms), resolved_id=r.id)
+        steps = StepGenerator(repo).regenerate()
+        assert len(steps) == 1  # merged despite distinct row ids
+    finally:
+        repo.close()
+
+
+def test_generator_does_not_merge_different_controls_in_same_window(tmp_path) -> None:
+    """Two rapid clicks on DIFFERENT named controls are two steps.
+
+    Guards the other half of the key fix: the live path used to key on
+    (None, window) and merged everything in a window into one step.
+    """
+    repo = SessionRepository.create(workspace_root=tmp_path, name="TwoControls")
+    try:
+        t0 = utcnow()
+        for ms, name in ((0, "Save"), (300, "Cancel")):
+            r = repo.add_resolved_element(
+                ResolvedElement(
+                    id=None, name=name, control_type="Button",
+                    confidence=0.9, method="uia",
+                )
+            )
+            _append_click(repo, when=t0 + timedelta(milliseconds=ms), resolved_id=r.id)
+        steps = StepGenerator(repo).regenerate()
+        assert len(steps) == 2
+        assert "Save" in steps[0].action
+        assert "Cancel" in steps[1].action
+    finally:
+        repo.close()
+
+
+def test_generator_double_click_is_one_step_with_double_click_verb(tmp_path) -> None:
+    """A physical double-click arrives as CLICK then DOUBLE_CLICK; the
+    exhibit must show ONE step that says "Double-click", not two steps
+    or a step mislabelled "Click"."""
+    repo = SessionRepository.create(workspace_root=tmp_path, name="Dbl")
+    try:
+        t0 = utcnow()
+        r1 = repo.add_resolved_element(
+            ResolvedElement(id=None, name="report.pdf", control_type="ListItem",
+                            confidence=0.9, method="uia")
+        )
+        r2 = repo.add_resolved_element(
+            ResolvedElement(id=None, name="report.pdf", control_type="ListItem",
+                            confidence=0.9, method="uia")
+        )
+        _append_click(repo, when=t0, resolved_id=r1.id)
+        repo.append_event(
+            kind=EventKind.DOUBLE_CLICK,
+            occurred_at=t0 + timedelta(milliseconds=250),
+            button="left", x=10, y=10,
+            window_title="App", process_name="app.exe",
+            resolved_element_id=r2.id,
+        )
+        steps = StepGenerator(repo).regenerate()
+        assert len(steps) == 1
+        assert steps[0].action.startswith("Double-click")
+        assert len(steps[0].source_event_ids) == 2
+    finally:
+        repo.close()
+
+
+def test_regenerate_preserves_manual_step_with_unmatched_sources(tmp_path) -> None:
+    """A split_step half (manual, source set not reproduced by
+    clustering) must survive regenerate -- which fires automatically on
+    every recording stop. Its event ids are removed from generated
+    steps so no event is referenced twice.
+    """
+    repo = SessionRepository.create(workspace_root=tmp_path, name="SplitSurvives")
+    try:
+        t0 = utcnow()
+        e1 = _append_click(repo, when=t0)
+        e2 = _append_click(repo, when=t0 + timedelta(milliseconds=100))
+        assert e1.id is not None
+        assert e2.id is not None
+        # Simulate a manual split: two manual steps, one event each --
+        # clustering would merge these two events into one step.
+        repo.replace_steps([
+            DraftStep(id=None, sequence=0, action="First half (edited)",
+                      source_event_ids=(e1.id,), manual_edit=True),
+            DraftStep(id=None, sequence=0, action="Second half (edited)",
+                      source_event_ids=(e2.id,), manual_edit=True,
+                      evidentiary=True),
+        ])
+        steps = StepGenerator(repo).regenerate()
+        actions = [s.action for s in steps]
+        assert "First half (edited)" in actions
+        assert "Second half (edited)" in actions
+        # Flags survive, and no event id appears in two steps.
+        assert any(s.evidentiary for s in steps)
+        all_ids = [eid for s in steps for eid in s.source_event_ids]
+        assert len(all_ids) == len(set(all_ids))
+    finally:
+        repo.close()
+
+
+def test_regenerate_preserves_sourceless_suggestion_draft(tmp_path) -> None:
+    """A suggestion-drafted step has source_event_ids=() and manual_edit
+    True; regenerate used to silently delete it."""
+    repo = SessionRepository.create(workspace_root=tmp_path, name="DraftSurvives")
+    try:
+        e1 = _append_click(repo, when=utcnow())
+        assert e1.id is not None
+        repo.replace_steps([
+            DraftStep(id=None, sequence=0, action="Verify SHA-256 of the image",
+                      source_event_ids=(), manual_edit=True),
+        ])
+        steps = StepGenerator(repo).regenerate()
+        actions = [s.action for s in steps]
+        assert "Verify SHA-256 of the image" in actions
+        # And it sorts after the event-anchored steps.
+        assert actions[-1] == "Verify SHA-256 of the image"
     finally:
         repo.close()

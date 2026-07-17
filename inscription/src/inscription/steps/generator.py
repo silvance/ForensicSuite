@@ -24,6 +24,7 @@ from inscription.steps._dedup import (
     ClickDedup,
     KeyPressDedup,
     ScrollDedup,
+    click_key,
 )
 
 if TYPE_CHECKING:
@@ -176,18 +177,41 @@ class StepGenerator:
     def regenerate(self) -> list[DraftStep]:
         """Replace the session's draft steps with freshly-generated ones.
 
-        Preserves manual edits where the source event set is unchanged.
+        Manual-step preservation has two tiers: a manual step whose
+        exact source set is reproduced by clustering keeps its text and
+        flags in place; one that is NOT reproduced (a split half, a
+        suggestion-drafted step with no source events, or any step the
+        clustering groups differently) is re-inserted at its timeline
+        position with its event ids removed from the generated steps.
+        Regenerate fires automatically on recording stop -- it must
+        never destroy examiner work.
         """
         existing = self._repo.list_steps(include_suppressed=True)
         manual_by_sources = {step.source_event_ids: step for step in existing if step.manual_edit}
 
+        # Per-event sticky flags (same policy as StepRewriter): a step
+        # flag the examiner set follows each underlying event through
+        # whatever regrouping this pass produces.
+        flag_by_event: dict[int, tuple[bool, bool]] = {}
+        for step in existing:
+            if not (step.evidentiary or step.suppressed):
+                continue
+            for eid in step.source_event_ids:
+                prev = flag_by_event.get(eid, (False, False))
+                flag_by_event[eid] = (
+                    prev[0] or step.evidentiary,
+                    prev[1] or step.suppressed,
+                )
+
         events = self._repo.list_events()
         actions = self._reduce_to_actions(events)
 
+        matched_manual: set[tuple[int, ...]] = set()
         new_steps: list[DraftStep] = []
         for action in actions:
             preserved = manual_by_sources.get(action.source_event_ids)
             if preserved is not None:
+                matched_manual.add(action.source_event_ids)
                 new_steps.append(
                     DraftStep(
                         id=None,
@@ -195,11 +219,21 @@ class StepGenerator:
                         action=preserved.action,
                         result=preserved.result,
                         source_event_ids=action.source_event_ids,
-                        screenshot_id=action.screenshot_id,
+                        screenshot_id=preserved.screenshot_id or action.screenshot_id,
                         manual_edit=True,
+                        suppressed=preserved.suppressed,
+                        evidentiary=preserved.evidentiary,
                     )
                 )
                 continue
+            evidentiary = any(
+                flag_by_event.get(eid, (False, False))[0]
+                for eid in action.source_event_ids
+            )
+            suppressed = any(
+                flag_by_event.get(eid, (False, False))[1]
+                for eid in action.source_event_ids
+            )
             new_steps.append(
                 DraftStep(
                     id=None,
@@ -209,8 +243,16 @@ class StepGenerator:
                     source_event_ids=action.source_event_ids,
                     screenshot_id=action.screenshot_id,
                     manual_edit=False,
+                    suppressed=suppressed,
+                    evidentiary=evidentiary,
                 )
             )
+
+        new_steps = _merge_unmatched_manual_steps(
+            generated=new_steps,
+            existing=existing,
+            matched_manual=matched_manual,
+        )
 
         saved = self._repo.replace_steps(new_steps)
         self._repo.flush_manifest()
@@ -226,6 +268,12 @@ class StepGenerator:
 
         for i, event in enumerate(events):
             if event.kind is EventKind.WINDOW_FOCUS and self._window_focus_is_noise(events, i):
+                # A suppressed focus is still a window boundary: reset
+                # the dedup machines (like every other drop path) so
+                # events straddling it never merge across the switch.
+                click_dedup.reset()
+                key_dedup.reset()
+                scroll_dedup.reset()
                 continue
 
             # Drop corrective key presses (Backspace, Delete) — same
@@ -261,15 +309,30 @@ class StepGenerator:
 
             if click_dedup.observe(
                 kind=event.kind,
-                key=(event.resolved_element_id, event.window_title),
+                key=click_key(
+                    name=resolved.name if resolved else None,
+                    control_type=resolved.control_type if resolved else None,
+                    window_title=event.window_title,
+                    x=event.x,
+                    y=event.y,
+                ),
                 ts=ts,
             ) and actions:
                 last = actions[-1]
+                # A DOUBLE_CLICK merging into its own preceding CLICK is
+                # one physical gesture -- the step must say what the
+                # gesture WAS, so re-render with the double-click verb.
+                if event.kind is EventKind.DOUBLE_CLICK:
+                    merged_action = render_step_action(event, resolved)
+                    merged_kind = EventKind.DOUBLE_CLICK
+                else:
+                    merged_action = last.action
+                    merged_kind = last.kind
                 actions[-1] = _Action(
-                    kind=last.kind,
+                    kind=merged_kind,
                     source_event_ids=(*last.source_event_ids, event.id or 0),
                     screenshot_id=last.screenshot_id or event.screenshot_id,
-                    action=last.action,
+                    action=merged_action,
                     result=last.result,
                 )
                 continue
@@ -329,6 +392,82 @@ class StepGenerator:
                 return True
             break
         return False
+
+
+def _merge_unmatched_manual_steps(
+    *,
+    generated: list[DraftStep],
+    existing: list[DraftStep],
+    matched_manual: set[tuple[int, ...]],
+) -> list[DraftStep]:
+    """Re-insert manual steps the clustering didn't reproduce.
+
+    Their event ids are removed from generated steps first (an event
+    must never be referenced by two steps); generated steps left with
+    no events are dropped. Timeline position comes from the smallest
+    source event id; steps with no source events (suggestion drafts)
+    sort by their original sequence at the end.
+    """
+    unmatched = [
+        s
+        for s in existing
+        if s.manual_edit and s.source_event_ids not in matched_manual
+    ]
+    if not unmatched:
+        return generated
+
+    claimed = {eid for s in unmatched for eid in s.source_event_ids}
+    kept: list[DraftStep] = []
+    for step in generated:
+        if step.manual_edit:
+            kept.append(step)
+            continue
+        remaining = tuple(e for e in step.source_event_ids if e not in claimed)
+        if not remaining:
+            continue  # fully claimed by a manual step
+        trimmed = step
+        if remaining != step.source_event_ids:
+            trimmed = DraftStep(
+                id=None,
+                sequence=0,
+                action=step.action,
+                result=step.result,
+                source_event_ids=remaining,
+                screenshot_id=step.screenshot_id,
+                manual_edit=False,
+                suppressed=step.suppressed,
+                evidentiary=step.evidentiary,
+            )
+        kept.append(trimmed)
+
+    reinserted = [
+        DraftStep(
+            id=None,
+            sequence=0,
+            action=s.action,
+            result=s.result,
+            source_event_ids=s.source_event_ids,
+            screenshot_id=s.screenshot_id,
+            manual_edit=True,
+            suppressed=s.suppressed,
+            evidentiary=s.evidentiary,
+        )
+        for s in unmatched
+    ]
+    # Original sequence rank for sourceless steps, so suggestion
+    # drafts keep their relative order after event-anchored steps.
+    rank_by_action = {
+        (s.action, s.result): s.sequence for s in existing if not s.source_event_ids
+    }
+
+    def _position(step: DraftStep) -> tuple[float, int]:
+        if step.source_event_ids:
+            return (float(min(step.source_event_ids)), 0)
+        return (float("inf"), rank_by_action.get((step.action, step.result), 0))
+
+    merged = kept + reinserted
+    merged.sort(key=_position)
+    return merged
 
 
 def generate_steps(repository: SessionRepository) -> list[DraftStep]:

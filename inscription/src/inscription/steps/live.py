@@ -36,7 +36,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from inscription.model import DraftStep, EventKind, RawEvent
-from inscription.steps._dedup import ClickDedup, KeyPressDedup, ScrollDedup
+from inscription.steps._dedup import ClickDedup, KeyPressDedup, ScrollDedup, click_key
 from inscription.steps.generator import render_repeat_key_press, render_step_action
 
 if TYPE_CHECKING:
@@ -145,16 +145,37 @@ class LiveStepGenerator:
             return
 
         # Click coalescing: rapid repeat clicks on the same element.
-        element_id = event.resolved.id if event.resolved is not None else None
+        # Keyed on what the element IS (name/type/window/coarse-pos),
+        # not its DB id -- the resolver returns id=None for in-flight
+        # elements, so an id key merged every rapid click in a window
+        # regardless of target.
+        resolved = event.resolved
         if self._click_dedup.observe(
-            kind=raw.kind, key=(element_id, window), ts=ts
+            kind=raw.kind,
+            key=click_key(
+                name=resolved.name if resolved else None,
+                control_type=resolved.control_type if resolved else None,
+                window_title=window,
+                x=raw.x,
+                y=raw.y,
+            ),
+            ts=ts,
         ) and self._last_step_id is not None:
             self._key_dedup.reset()
             self._scroll_dedup.reset()
+            # One physical double-click arrives as CLICK then
+            # DOUBLE_CLICK; the merged step must carry the double-click
+            # verb, not the first event's "Click ...".
+            merged_action = (
+                render_step_action(self._adapt(raw_id=raw_id, event=event), resolved)
+                if raw.kind is EventKind.DOUBLE_CLICK
+                else None
+            )
             self._repo.extend_step_sources(
                 self._last_step_id,
                 extra_event_ids=(raw_id,),
                 screenshot_id=event.persisted_screenshot_id,
+                action=merged_action,
             )
             return
 

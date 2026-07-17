@@ -98,26 +98,14 @@ class SessionSink:
                     width=raw.png_width,
                     height=raw.png_height,
                     sha256=event.image_sha256,
+                    origin_left=raw.png_left,
+                    origin_top=raw.png_top,
                 )
                 screenshot_id = artifact.id
             except OSError:
                 logger.exception(
                     "Screenshot persist failed; saving event without image"
                 )
-            relative = f"screenshots/{_filename_for(event.processed_at)}"
-            target = self._repo.session.root / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(raw.png_bytes)
-            artifact = self._repo.add_screenshot(
-                relative_path=relative,
-                captured_at=event.processed_at,
-                width=raw.png_width,
-                height=raw.png_height,
-                sha256=event.image_sha256,
-                origin_left=raw.png_left,
-                origin_top=raw.png_top,
-            )
-            screenshot_id = artifact.id
 
         resolved_id: int | None = None
         if event.resolved is not None and event.resolved.confidence > 0:

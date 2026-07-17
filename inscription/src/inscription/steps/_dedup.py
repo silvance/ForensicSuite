@@ -42,7 +42,42 @@ KEY_PRESS_DEDUP_WINDOW_S = 5.0
 SCROLL_DEDUP_WINDOW_S = 2.0
 
 
-ClickKey = tuple[int | None, str | None]
+#: Semantic click identity: (element name, control type, window title,
+#: coarse x, coarse y). Earlier versions keyed on the resolved element's
+#: DB id -- but the live path always saw ``id=None`` (over-merging every
+#: rapid click in a window into one step) while the batch path saw a
+#: FRESH row id per event (never merging anything). Keying on what the
+#: element IS makes both generators cluster the same stream identically.
+#: The coarse coordinates only matter when the element has no name:
+#: they stop two rapid clicks on different unnamed regions from merging.
+ClickKey = tuple[str, str, str, int, int]
+
+#: Cell size for the unnamed-click coordinate fallback. Clicks within
+#: the same 64px cell of the same window are treated as the same target.
+_CLICK_CELL_PX = 64
+
+
+def click_key(
+    *,
+    name: str | None,
+    control_type: str | None,
+    window_title: str | None,
+    x: int | None,
+    y: int | None,
+) -> ClickKey:
+    """Build the shared click-dedup key from element + position facts."""
+    if name:
+        # Named element: position is irrelevant, the identity is the
+        # control itself (a button doesn't stop being the same button
+        # because the second click landed 3px away).
+        return (name, control_type or "", window_title or "", 0, 0)
+    return (
+        "",
+        control_type or "",
+        window_title or "",
+        (x or 0) // _CLICK_CELL_PX,
+        (y or 0) // _CLICK_CELL_PX,
+    )
 KeyPressKey = tuple[str | None, str | None]
 ScrollKey = tuple[str | None, str | None]
 

@@ -101,7 +101,15 @@ note "Upgrading pip"
 # --------------------------------------------------------------- 4. editable installs
 
 note "Installing all four packages in editable mode"
-"$VENV_PIP" install --quiet -e "${PACKAGES[@]}"
+# -e binds only to the requirement immediately after it, so each
+# package needs its own flag -- one -e before an array expansion
+# installs the FIRST editable and silently COPIES the rest into
+# site-packages, where source edits stop being picked up.
+EDITABLE_ARGS=()
+for pkg in "${PACKAGES[@]}"; do
+    EDITABLE_ARGS+=(-e "$pkg")
+done
+"$VENV_PIP" install --quiet "${EDITABLE_ARGS[@]}"
 
 # --------------------------------------------------------------- 5. sanity check
 
