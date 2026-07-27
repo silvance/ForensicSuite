@@ -57,7 +57,7 @@ def _reveal_windows(target: Path) -> bool:
         # Use ``str()`` not ``os.fspath`` because Explorer.exe is
         # picky about path normalisation -- forward slashes work in
         # Python's API but Explorer wants backslashes.
-        subprocess.Popen(  # noqa: S603 - trusted fixed args
+        subprocess.Popen(
             ["explorer.exe", "/select,", str(target)],
         )
     except OSError as exc:
@@ -69,7 +69,7 @@ def _reveal_windows(target: Path) -> bool:
 def _reveal_macos(target: Path) -> bool:
     """``open -R`` reveals the file in Finder."""
     try:
-        subprocess.Popen(  # noqa: S603, S607 - fixed args, PATH lookup is fine
+        subprocess.Popen(
             ["open", "-R", str(target)],
         )
     except OSError as exc:
@@ -84,7 +84,7 @@ def _reveal_linux(target: Path) -> bool:
         logger.warning("xdg-open not on PATH; cannot reveal %s", target)
         return False
     try:
-        subprocess.Popen(  # noqa: S603, S607 - xdg-open is the standard launcher
+        subprocess.Popen(
             ["xdg-open", str(target.parent)],
         )
     except OSError as exc:

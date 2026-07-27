@@ -5,14 +5,10 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
 from suite_common.ui.reveal import reveal_in_file_manager
-
-if TYPE_CHECKING:
-    pass
 
 
 def test_reveal_returns_false_when_path_missing(tmp_path: Path) -> None:

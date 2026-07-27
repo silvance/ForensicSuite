@@ -1,4 +1,4 @@
-"""Read the bundle's `version.json` stamp at runtime.
+r"""Read the bundle's `version.json` stamp at runtime.
 
 `prepare-bundle.ps1` writes a `version.json` at the root of the
 air-gapped bundle (alongside `start-suite.ps1`, `Inscription\`,

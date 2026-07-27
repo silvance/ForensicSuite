@@ -183,7 +183,7 @@ def show_error(
     between the warning and critical icon variants; both block until
     dismissed and look identical to operators.
     """
-    from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415
+    from PySide6.QtWidgets import QMessageBox
 
     body = friendly_storage_error(exc, what=what)
     method = QMessageBox.critical if critical else QMessageBox.warning

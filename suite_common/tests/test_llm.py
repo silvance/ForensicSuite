@@ -248,18 +248,16 @@ def test_list_available_models_raises_on_http_error() -> None:
     def handler(h: BaseHTTPRequestHandler) -> None:
         _send_json(h, 500, {"error": "down"})
 
-    with _models_server(handler) as url:
-        with pytest.raises(LLMRequestError):
-            list_available_models(base_url=url, timeout_s=2)
+    with _models_server(handler) as url, pytest.raises(LLMRequestError):
+        list_available_models(base_url=url, timeout_s=2)
 
 
 def test_list_available_models_raises_on_malformed_body() -> None:
     def handler(h: BaseHTTPRequestHandler) -> None:
         _send_json(h, 200, {"unexpected": "shape"})
 
-    with _models_server(handler) as url:
-        with pytest.raises(LLMResponseError):
-            list_available_models(base_url=url, timeout_s=2)
+    with _models_server(handler) as url, pytest.raises(LLMResponseError):
+        list_available_models(base_url=url, timeout_s=2)
 
 
 def test_list_available_models_validates_base_url() -> None:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import errno
 import sqlite3
 
-
 from suite_common.errors import friendly_storage_error
 
 
@@ -107,4 +106,4 @@ def test_show_error_lazy_imports_qt() -> None:
     # We don't import Qt at module import time; show_error pulls it
     # in when called. Just verify importing the helper doesn't blow up
     # without a Qt platform plugin.
-    from suite_common.errors import show_error  # noqa: F401, PLC0415
+    from suite_common.errors import show_error  # noqa: F401
