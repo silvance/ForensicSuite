@@ -120,6 +120,9 @@ class SessionController(QObject):
     _toggle_requested = Signal()
     _marker_requested = Signal()
     _snapshot_requested = Signal()
+    #: Fired from the capture worker thread with the running sink-failure
+    #: count; queued onto the Qt main thread to update the recorder bar.
+    _sink_failure = Signal(int)
     #: Fired by the live step generator (capture worker thread) whenever
     #: a step is appended or extended; the queued connection bounces
     #: workspace.reload() onto the Qt main thread.
@@ -183,6 +186,7 @@ class SessionController(QObject):
         self._toggle_requested.connect(self._on_toggle_hotkey)
         self._marker_requested.connect(self._on_marker_hotkey)
         self._snapshot_requested.connect(self._on_snapshot_hotkey)
+        self._sink_failure.connect(self._on_sink_failure)
         self._live_steps_changed.connect(self._on_live_steps_changed)
 
     # ------------------------------------------------------------ lifecycle
@@ -476,6 +480,7 @@ class SessionController(QObject):
         engine = CaptureEngine(
             foreground_factory=create_foreground_inspector,
             resolver_factory=create_element_resolver,
+            on_sink_error=self._notify_sink_error,
         )
 
         bridge = QtCaptureBridge(parent=self)
@@ -518,13 +523,29 @@ class SessionController(QObject):
         self._engine = engine
         self._bridge = bridge
         self._sink = sink
+        self._recorder_bar.set_persist_failures(0)
         self._recorder_bar.set_recording(True)
         self.recording_state_changed.emit(True)
+        # Boundary marker: lands in the notes as its own step, so the
+        # exhibit records exactly when capture was running -- and it
+        # hard-resets both generators' dedup machines, so events from
+        # a previous recording on this session can never merge with
+        # events from this one ("Press Enter 2 times" spanning a
+        # stop/start gap misrepresented continuity of action).
+        engine.submit(
+            RawCaptureEvent(kind=EventKind.MARKER, text="— Recording started —")
+        )
         logger.info("Recording started for session %r", self._repository.session.info.name)
 
     def _stop_recording(self) -> None:
         if self._engine is None:
             return
+        # Boundary marker before stop() -- the engine still drains its
+        # queue during shutdown, so this lands as the recording's final
+        # event. See the start-marker comment for why.
+        self._engine.submit(
+            RawCaptureEvent(kind=EventKind.MARKER, text="— Recording stopped —")
+        )
         try:
             self._engine.stop()
         except Exception:
@@ -538,6 +559,22 @@ class SessionController(QObject):
         self._hotkeys.unregister_all()
         if self._repository is not None:
             self._register_toggle_hotkey()
+
+    def _notify_sink_error(self, _sink: object, _exc: BaseException) -> None:
+        """Engine callback -- runs on the capture worker thread.
+
+        Bounce the running failure count onto the Qt main thread via a
+        queued signal; touching widgets from here would be undefined
+        behaviour.
+        """
+        engine = self._engine
+        count = engine.sink_failure_count if engine is not None else 0
+        self._sink_failure.emit(count)
+
+    @Slot(int)
+    def _on_sink_failure(self, count: int) -> None:
+        self._recorder_bar.set_persist_failures(count)
+        logger.warning("Recording persist failures: %d (see log for causes)", count)
         self._recorder_bar.set_recording(False)
         self.recording_state_changed.emit(False)
 
