@@ -9,6 +9,38 @@ For day-to-day developer setup, see `SETUP.md` instead.
 
 ---
 
+## Single-file option: InscriptionSuite-Setup.exe
+
+Prefer one file over a folder? Build with the switch:
+
+```
+.\Build-Bundle.bat -SingleExe
+```
+
+That packs the entire staged bundle into **one
+`InscriptionSuite-Setup.exe`** next to the folder. On the air-gapped
+workstation it is both installer and launcher:
+
+- **First double-click:** extracts, runs the bundle's own
+  `Install-Suite.cmd` (same install path, Start Menu shortcut, and
+  behaviour as the folder flow), cleans up its cache, and starts the
+  suite.
+- **Every later double-click:** detects the installed version and
+  starts the suite directly. Keep the exe on the desktop as the
+  launcher, or use the Start Menu shortcut -- both work.
+- **A newer exe** (different bundle version stamp) reinstalls over
+  the old version automatically.
+
+Constraints worth knowing:
+
+- The exe exceeds 4 GB with models included -- **FAT32 USB sticks
+  can't hold it**; format the stick exFAT or NTFS.
+- Windows SmartScreen flags large unsigned executables on first run
+  ("More info" → "Run anyway"). Sign the exe with your
+  organisation's code-signing certificate to remove that friction.
+- Disk peak during first install is ~2× the bundle size (extraction
+  cache + installed copy); the cache is removed automatically.
+
 ## What gets shipped
 
 ```
