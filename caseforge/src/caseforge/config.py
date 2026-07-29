@@ -25,6 +25,7 @@ _K_EXAMINER_ORG: Final = "examiner/org"
 _K_EXAMINER_BADGE: Final = "examiner/badge_id"
 _K_INSCRIPTION_PATH: Final = "launcher/inscription_path"
 _K_CASEGUIDE_PATH: Final = "launcher/caseguide_path"
+_K_WHISPR_PATH: Final = "launcher/whispr_path"
 _K_RECENT_CASE_PATHS: Final = "browser/recent_case_paths"
 _K_ONBOARDING_COMPLETED: Final = "onboarding/completed"
 
@@ -135,6 +136,22 @@ class Config:
     @caseguide_path.setter
     def caseguide_path(self, value: str) -> None:
         self._qs.setValue(_K_CASEGUIDE_PATH, value)
+
+    @property
+    def whispr_path(self) -> str:
+        """Absolute path to the Whispr transcription GUI (exe or script).
+
+        Same fall-through rules as :attr:`inscription_path` -- blank
+        means PATH lookup then ``python -m whispr``. Whispr is the
+        audio-transcription companion (silvance/whisper.py); it's
+        optional, so a missing install just means the launch reports
+        a friendly failure.
+        """
+        return str(self._qs.value(_K_WHISPR_PATH, ""))
+
+    @whispr_path.setter
+    def whispr_path(self, value: str) -> None:
+        self._qs.setValue(_K_WHISPR_PATH, value)
 
     # ----------------------------------------------------------- browser
 

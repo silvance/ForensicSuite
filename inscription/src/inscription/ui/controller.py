@@ -16,17 +16,27 @@ Global hotkeys also live here:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtGui import QUndoStack
 from PySide6.QtWidgets import (
     QDialog,
+    QFileDialog,
     QInputDialog,
     QMessageBox,
     QWidget,
 )
 from suite_common import show_error
+from suite_common.atomic import atomic_write_text
+from suite_common.transcribe import (
+    DEFAULT_WHISPER_MODEL,
+    Transcription,
+    find_whisper_cli,
+    whisper_install_hint,
+)
+from suite_common.ui.export_success import show_export_complete
 
 from inscription import __version__
 from inscription.capture import (
@@ -77,6 +87,7 @@ from inscription.ui.regenerate_dialog import RegenerateWorker, run_regenerate
 from inscription.ui.rewrite_dialog import RewriteProgressDialog, RewriteWorker
 from inscription.ui.session_dialogs import SessionListDialog
 from inscription.ui.settings_dialog import SettingsDialog
+from inscription.ui.transcribe_dialog import TranscribeProgressDialog, TranscribeWorker
 from inscription.ui.undo_commands import (
     EditStepFieldsCommand,
     ReorderStepsCommand,
@@ -89,7 +100,6 @@ from inscription.ui.verify_progress_dialog import VerifyProgressDialog, VerifyWo
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from inscription.caseguide_link import CaseguideSuggestion
     from inscription.model import ExportDocument
@@ -210,6 +220,111 @@ class SessionController(QObject):
     def open_settings(self) -> None:
         """Show the Settings dialog (examiner identity + LLM endpoint)."""
         SettingsDialog(self._config, parent=self._parent_widget).exec()
+
+    def transcribe_audio_evidence(self) -> None:
+        """Transcribe an audio/video evidence file into the open session.
+
+        The transcript is saved to ``<session>/transcripts/<stem>.txt``
+        (never next to the evidence file -- the source may live on a
+        read-only mounted image) and a MARKER event records the act of
+        transcription in the timeline, so the exported notes show
+        when it happened and against which file. Requires the local
+        Whisper CLI; absent installs get the install hint instead of
+        a stack trace.
+        """
+        if self._repository is None:
+            QMessageBox.information(
+                self._parent_widget,
+                "No session",
+                "Open a session before transcribing audio evidence.",
+            )
+            return
+        if self.is_session_submitted():
+            QMessageBox.information(
+                self._parent_widget,
+                "Session submitted",
+                "This session is marked as submitted. Reopen it for "
+                "editing before adding a transcription.",
+            )
+            return
+        if find_whisper_cli() is None:
+            QMessageBox.information(
+                self._parent_widget,
+                "Whisper not installed",
+                whisper_install_hint(),
+            )
+            return
+        target, _ = QFileDialog.getOpenFileName(
+            self._parent_widget,
+            "Transcribe audio evidence",
+            "",
+            "Audio / video (*.wav *.mp3 *.m4a *.flac *.ogg *.opus "
+            "*.mp4 *.mkv *.mov *.avi *.webm);;All files (*)",
+        )
+        if not target:
+            return
+        media_path = Path(target)
+        worker = TranscribeWorker(media_path, model=DEFAULT_WHISPER_MODEL)
+        dialog = TranscribeProgressDialog(worker, parent=self._parent_widget)
+        dialog.succeeded.connect(
+            lambda result: self._on_transcription_done(media_path, result)
+        )
+        dialog.failed.connect(self._on_transcription_failed)
+        dialog.start()
+        dialog.exec()
+
+    def _on_transcription_done(self, media_path: Path, result: object) -> None:
+        if self._repository is None:  # session closed mid-run
+            return
+        if not isinstance(result, Transcription):  # defensive: signal payload
+            logger.error("Unexpected transcription payload: %r", type(result))
+            return
+        transcripts_dir = self._repository.session.root / "transcripts"
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
+        out_path = transcripts_dir / f"{media_path.stem}.txt"
+        # Uniquify -- two different evidence files can share a stem.
+        n = 1
+        while out_path.exists():
+            out_path = transcripts_dir / f"{media_path.stem}-{n}.txt"
+            n += 1
+        try:
+            atomic_write_text(out_path, result.as_plain_text())
+        except OSError as exc:
+            show_error(
+                self._parent_widget,
+                title="Transcription save failed",
+                what="save the transcript",
+                exc=exc,
+                critical=True,
+            )
+            return
+        # Timeline record: the exported notes should show that a
+        # transcription was performed, of what, with what engine.
+        self._repository.append_event(
+            kind=EventKind.MARKER,
+            text=(
+                f"Transcribed audio evidence {media_path.name!r} "
+                f"(whisper {result.model} model, offline) -> "
+                f"transcripts/{out_path.name}"
+            ),
+        )
+        self._regenerate_steps()
+        show_export_complete(
+            self._parent_widget,
+            title="Transcription complete",
+            label=(
+                f"Transcribed {media_path.name} "
+                f"({result.language or 'language unknown'})."
+            ),
+            path=out_path,
+        )
+
+    def _on_transcription_failed(self, message: str) -> None:
+        QMessageBox.warning(
+            self._parent_widget,
+            "Transcription failed",
+            message,
+        )
 
     def verify_integrity(self) -> None:
         """Re-hash every screenshot in the open session and report drift.

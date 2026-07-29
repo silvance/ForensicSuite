@@ -19,9 +19,11 @@ from typing import TYPE_CHECKING
 import pytest
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QAbstractItemView, QFileDialog
+from suite_common.transcribe import Transcription, TranscriptSegment
 
 from inscription.model import DraftStep, EventKind, ResolvedElement
 from inscription.storage import SessionRepository, SubmittedMarker, submitted
+from inscription.ui import controller as controller_mod
 from inscription.ui import controller_exports
 from inscription.ui.step_editor import StepEditorPanel
 from inscription.ui.step_list import StepListWidget
@@ -532,5 +534,62 @@ def test_recording_start_and_stop_emit_boundary_markers(qtbot, tmp_path: Path) -
         texts = [e.text for e in repo.list_events() if e.kind is EventKind.MARKER]
         assert "— Recording started —" in texts
         assert "— Recording stopped —" in texts
+    finally:
+        repo.close()
+
+
+# ------------------------------------------------- audio transcription
+
+
+def test_transcription_done_saves_transcript_and_marker(qtbot, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    """The success handler writes transcripts/<stem>.txt into the
+    session, appends a MARKER recording the act (source file, model,
+    output path), and never writes next to the evidence file."""
+    repo = SessionRepository.create(workspace_root=tmp_path, name="Transcribe")
+    try:
+        ws = _FakeWorkspace()
+        rb = _FakeRecorderBar()
+        controller = SessionController(
+            workspace=ws,  # type: ignore[arg-type]
+            recorder_bar=rb,  # type: ignore[arg-type]
+        )
+        controller._activate(repo)
+
+        evidence_dir = tmp_path / "evidence"
+        evidence_dir.mkdir()
+        media = evidence_dir / "interview.wav"
+        media.write_bytes(b"RIFF-fake")
+        result = Transcription(
+            source_path=media,
+            model="base",
+            language="en",
+            text="Hash verified.",
+            segments=[TranscriptSegment(start_s=0.0, end_s=2.0, text="Hash verified.")],
+        )
+        # Suppress the modal success dialog for the headless test, and
+        # stub the regenerate kick so no worker thread outlives the repo.
+        controller._regenerate_steps = lambda: None  # type: ignore[method-assign]
+
+        shown: list[Path] = []
+        original = controller_mod.show_export_complete
+        controller_mod.show_export_complete = (  # type: ignore[assignment]
+            lambda *_a, **kw: shown.append(kw["path"])
+        )
+        try:
+            controller._on_transcription_done(media, result)
+        finally:
+            controller_mod.show_export_complete = original  # type: ignore[assignment]
+
+        out = repo.session.root / "transcripts" / "interview.txt"
+        assert out.is_file()
+        body = out.read_text(encoding="utf-8")
+        assert "Source: interview.wav" in body
+        assert "[00:00] Hash verified." in body
+        # Nothing written beside the evidence.
+        assert list(evidence_dir.iterdir()) == [media]
+        # Timeline records the act.
+        markers = [e.text for e in repo.list_events() if e.kind is EventKind.MARKER]
+        assert any("interview.wav" in (t or "") and "whisper base" in (t or "") for t in markers)
+        assert shown == [out]
     finally:
         repo.close()

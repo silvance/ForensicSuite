@@ -186,3 +186,56 @@ def test_frozen_bundle_unknown_module_falls_through(tmp_path: Path) -> None:
         )
     # Falls through to ``python -m reportbuilder``.
     assert cmd[:3] == [str(fake_caseforge), "-m", "reportbuilder"]
+
+
+def test_whispr_launches_without_case_dir_argument(tmp_path: Path) -> None:
+    """Whispr takes no --case-dir flag; passing one would make an
+    argparse-based entry point exit with a usage error before the
+    window ever appears. pass_case_dir=False must strip it on every
+    resolution path."""
+    with patch(
+        "caseforge.launcher.shutil.which",
+        side_effect=lambda name: "/opt/bin/whispr" if name == "whispr" else None,
+    ):
+        cmd = build_command(
+            executable_path="",
+            module_name="whispr",
+            case_dir=tmp_path,
+            pass_case_dir=False,
+        )
+    assert cmd == ["/opt/bin/whispr"]
+
+
+def test_whispr_python_module_fallback_without_case_dir(tmp_path: Path) -> None:
+    with patch("caseforge.launcher.shutil.which", return_value=None):
+        cmd = build_command(
+            executable_path="",
+            module_name="whispr",
+            case_dir=tmp_path,
+            pass_case_dir=False,
+        )
+    assert cmd == [sys.executable, "-m", "whispr"]
+
+
+def test_whispr_frozen_bundle_resolves_sibling(tmp_path: Path) -> None:
+    """The air-gapped bundle can ship Whispr as a sibling app."""
+    bundle_root = tmp_path / "InscriptionSuite-Airgapped"
+    (bundle_root / "CaseForge").mkdir(parents=True)
+    (bundle_root / "Whispr").mkdir()
+    fake_caseforge = bundle_root / "CaseForge" / "CaseForge.exe"
+    fake_caseforge.write_bytes(b"")
+    fake_whispr = bundle_root / "Whispr" / "Whispr.exe"
+    fake_whispr.write_bytes(b"")
+
+    with (
+        patch("caseforge.launcher.sys.frozen", create=True, new=True),
+        patch("caseforge.launcher.sys.executable", str(fake_caseforge)),
+        patch("caseforge.launcher.shutil.which", return_value=None),
+    ):
+        cmd = build_command(
+            executable_path="",
+            module_name="whispr",
+            case_dir=tmp_path,
+            pass_case_dir=False,
+        )
+    assert cmd == [str(fake_whispr)]
