@@ -59,7 +59,7 @@ from inscription.platform import (
     safe_close,
 )
 from inscription.resolve import create_element_resolver
-from inscription.steps import LiveStepGenerator, generate_steps
+from inscription.steps import LiveStepGenerator
 from inscription.storage import (
     SessionAlreadyExistsError,
     SessionLockedError,
@@ -73,6 +73,7 @@ from inscription.storage import (
 from inscription.ui.controller_errors import friendly_llm_error as _friendly_llm_error
 from inscription.ui.controller_exports import run_export
 from inscription.ui.qt_capture_bridge import QtCaptureBridge
+from inscription.ui.regenerate_dialog import RegenerateWorker, run_regenerate
 from inscription.ui.rewrite_dialog import RewriteProgressDialog, RewriteWorker
 from inscription.ui.session_dialogs import SessionListDialog
 from inscription.ui.settings_dialog import SettingsDialog
@@ -172,6 +173,9 @@ class SessionController(QObject):
         # mark_session_submitted / reopen_session_for_editing. See
         # is_session_submitted for the rationale.
         self._submitted_marker: SubmittedMarker | None = None
+        # In-flight regenerate worker; held so Qt doesn't GC the thread
+        # mid-run and so duplicate requests can be coalesced.
+        self._regen_worker: RegenerateWorker | None = None
 
         self._workspace.step_fields_edited.connect(self._on_step_fields_edited)
         self._workspace.step_suppressed.connect(self._on_step_suppressed)
@@ -687,17 +691,30 @@ class SessionController(QObject):
     def _regenerate_steps(self) -> None:
         if self._repository is None:
             return
-        try:
-            generate_steps(self._repository)
-        except Exception:
-            logger.exception("Step generation failed")
-            QMessageBox.warning(
-                self._parent_widget,
-                "Step generation failed",
-                "Inscription could not rebuild draft steps. See logs for details.",
-            )
+        if self._regen_worker is not None and self._regen_worker.isRunning():
+            # A regenerate is already in flight (e.g. rapid stop/start).
+            # replace_steps is last-writer-wins; queuing a second run
+            # concurrently would just race it for no benefit.
+            logger.info("Regenerate already running; skipping duplicate request")
             return
+        self._regen_worker = run_regenerate(
+            self._repository,
+            parent=self._parent_widget,
+            on_success=self._on_regenerate_done,
+            on_failure=self._on_regenerate_failed,
+        )
+
+    def _on_regenerate_done(self) -> None:
+        self._regen_worker = None
         self._workspace.reload()
+
+    def _on_regenerate_failed(self, _message: str) -> None:
+        self._regen_worker = None
+        QMessageBox.warning(
+            self._parent_widget,
+            "Step generation failed",
+            "Inscription could not rebuild draft steps. See logs for details.",
+        )
 
     def regenerate_steps(self) -> None:
         """Public entry point for the File > Regenerate menu item."""
