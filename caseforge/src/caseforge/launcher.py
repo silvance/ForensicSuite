@@ -47,6 +47,7 @@ class LaunchResult:
 _FROZEN_BUNDLE_NAMES = {
     "inscription": "Inscription",
     "caseguide": "CaseGuide",
+    "whispr": "Whispr",
 }
 
 
@@ -73,23 +74,34 @@ def _frozen_sibling_exe(module_name: str) -> Path | None:
     return None
 
 
-def build_command(*, executable_path: str, module_name: str, case_dir: Path) -> list[str]:
+def build_command(
+    *,
+    executable_path: str,
+    module_name: str,
+    case_dir: Path,
+    pass_case_dir: bool = True,
+) -> list[str]:
     """Compose the argv that should run a tool against ``case_dir``.
 
     ``executable_path`` of ``""`` triggers the PATH-then-bundle-then-
     python-module fall-through. Pure helper so unit tests can exercise
     the resolution order without spawning subprocesses.
 
+    ``pass_case_dir=False`` omits the ``--case-dir`` argument for
+    tools that don't take one (Whispr opens its own file picker); an
+    unknown flag would make some argparse-based tools exit
+    immediately with a usage error.
+
     An explicit path is validated to point at an existing regular file
     before being trusted; if it doesn't, we fall through to the PATH
     lookup rather than handing a stale or hostile path to ``Popen``.
     """
-    case_arg = str(case_dir.resolve())
+    case_args = ["--case-dir", str(case_dir.resolve())] if pass_case_dir else []
     explicit = executable_path.strip()
     if explicit:
         explicit_path = Path(explicit)
         if explicit_path.is_file():
-            return [explicit, "--case-dir", case_arg]
+            return [explicit, *case_args]
         logger.warning(
             "Configured %s path %r is not a regular file; falling back to PATH.",
             module_name,
@@ -97,11 +109,11 @@ def build_command(*, executable_path: str, module_name: str, case_dir: Path) -> 
         )
     on_path = shutil.which(module_name) or shutil.which(f"{module_name}.exe")
     if on_path:
-        return [on_path, "--case-dir", case_arg]
+        return [on_path, *case_args]
     sibling = _frozen_sibling_exe(module_name)
     if sibling is not None:
-        return [str(sibling), "--case-dir", case_arg]
-    return [sys.executable, "-m", module_name, "--case-dir", case_arg]
+        return [str(sibling), *case_args]
+    return [sys.executable, "-m", module_name, *case_args]
 
 
 def _spawn(command: list[str], *, tool_label: str, case_dir: Path) -> LaunchResult:
@@ -134,12 +146,18 @@ def _spawn(command: list[str], *, tool_label: str, case_dir: Path) -> LaunchResu
 
 
 def launch_tool(
-    *, tool_label: str, module_name: str, executable_path: str, case_dir: Path
+    *,
+    tool_label: str,
+    module_name: str,
+    executable_path: str,
+    case_dir: Path,
+    pass_case_dir: bool = True,
 ) -> LaunchResult:
     """Spawn ``module_name`` pointed at ``case_dir``. Non-blocking."""
     command = build_command(
         executable_path=executable_path,
         module_name=module_name,
         case_dir=case_dir,
+        pass_case_dir=pass_case_dir,
     )
     return _spawn(command, tool_label=tool_label, case_dir=case_dir)

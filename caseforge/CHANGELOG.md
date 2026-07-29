@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Launch Whispr.** Case menu + Settings path field for the Whispr
+  audio-transcription GUI (silvance/whisper.py — local Whisper with
+  speaker diarization). Resolves like the other sibling tools:
+  explicit path → PATH → air-gapped bundle sibling (`Whispr\Whispr.exe`)
+  → `python -m whispr`. Launched without a `--case-dir` argument
+  (Whispr picks files in its own UI).
+
 - **First-run onboarding dialog.** Greets a fresh install with a guided
   step through workspace root, examiner identity defaults, and
   launcher paths. Skippable if you'd rather configure via

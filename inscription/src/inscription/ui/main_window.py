@@ -184,6 +184,13 @@ class MainWindow(QMainWindow):
             file_menu, "&Verify integrity…", self._controller.verify_integrity,
             tip="Re-hash every screenshot and compare to the stored SHA-256",
         )
+        self._add_action(
+            file_menu, "&Transcribe audio evidence…",
+            self._controller.transcribe_audio_evidence,
+            tip="Transcribe an audio or video file with the local Whisper "
+                "engine; the transcript is saved into the session and the "
+                "timeline records the act",
+        )
         file_menu.addSeparator()
         self._add_action(
             file_menu, "Mark session as &submitted",

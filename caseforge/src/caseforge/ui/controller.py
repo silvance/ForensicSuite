@@ -233,7 +233,14 @@ class CaseController(QObject):
 
     # ----------------------------------------------------------- launching
 
-    def _launch(self, *, tool_label: str, module_name: str, executable_path: str) -> None:
+    def _launch(
+        self,
+        *,
+        tool_label: str,
+        module_name: str,
+        executable_path: str,
+        pass_case_dir: bool = True,
+    ) -> None:
         if self._case_dir is None:
             return
         result = launch_tool(
@@ -241,6 +248,7 @@ class CaseController(QObject):
             module_name=module_name,
             executable_path=executable_path,
             case_dir=self._case_dir,
+            pass_case_dir=pass_case_dir,
         )
         if not result.ok:
             QMessageBox.warning(self._parent_widget, "Launch failed", result.message)
@@ -261,6 +269,21 @@ class CaseController(QObject):
             tool_label="CaseGuide",
             module_name="caseguide",
             executable_path=self._config.caseguide_path,
+        )
+
+    def launch_whispr(self) -> None:
+        """Spawn the Whispr audio-transcription GUI.
+
+        Whispr takes no case argument (the operator picks media files
+        inside its own UI); launching it from here keeps the exam's
+        tool-set one click away and lets the air-gapped bundle ship it
+        as a sibling app like Inscription / CaseGuide.
+        """
+        self._launch(
+            tool_label="Whispr",
+            module_name="whispr",
+            executable_path=self._config.whispr_path,
+            pass_case_dir=False,
         )
 
     # ----------------------------------------------------- helpers

@@ -114,6 +114,11 @@ class MainWindow(QMainWindow):
             menu, "&Launch Inscription", self._controller.launch_inscription,
             tip="Spawn Inscription pointed at the open case",
         )
+        self._add_action(
+            menu, "Launch &Whispr (transcription)", self._controller.launch_whispr,
+            tip="Open the Whispr audio-transcription tool (local Whisper "
+                "engine with speaker diarization) for evidence audio",
+        )
         menu.addSeparator()
         self._add_action(menu, "Close case", self._controller.close_current)
         menu.addSeparator()

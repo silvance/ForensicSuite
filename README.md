@@ -8,6 +8,7 @@ Three forensic-exam desktop apps + a shared LLM helper library.
 | **Inscription** | Capture a Windows workflow, generate an annotated step guide |
 | **CaseForge** | Case intake, chain-of-custody, and report generation |
 | **CaseGuide** | LLM-assisted exam coach that suggests next actions |
+| *(optional)* **Whisper / Whispr** | Local speech-to-text for evidence audio — `pip install git+https://github.com/silvance/whisper.py.git`. Powers Inscription's "Transcribe audio evidence" and CaseForge's "Launch Whispr" |
 
 ---
 

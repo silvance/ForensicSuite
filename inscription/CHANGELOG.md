@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Audio evidence transcription (File → Transcribe audio evidence…).**
+  Transcribes an audio or video file with the local Whisper engine
+  (optional install: `pip install git+https://github.com/silvance/whisper.py.git`
+  plus ffmpeg). The transcript — with per-segment timestamps and
+  source/model/language provenance headers — is saved to
+  `<session>/transcripts/`, and a MARKER event records the act of
+  transcription in the timeline so exported notes show when it
+  happened and against which file. Runs fully offline; nothing
+  leaves the machine. Absent installs get an install hint, not a
+  stack trace.
+
 - **Markdown export.** Sibling of the HTML exporter; lands in
   File → Export as Markdown… Output is GitHub-flavoured Markdown
   (numbered headings + image refs into a sibling assets folder), so
