@@ -114,7 +114,9 @@ class MssScreenCapturer(ScreenCapturer):
     """
 
     def __init__(self) -> None:
-        self._sct = mss.mss()
+        # mss.mss() is deprecated in favour of mss.MSS; keep working on
+        # older mss versions that predate the class alias.
+        self._sct = mss.MSS() if hasattr(mss, "MSS") else mss.mss()
 
     def list_monitors(self) -> list[MonitorInfo]:
         return [

@@ -181,11 +181,11 @@ class SuggestionDelegate(QStyledItemDelegate):
         meta_top = body_rect.top() + len(wrapped) * line_height + _META_GAP
         self._draw_metadata_row(
             painter,
-            suggestion,
-            body_rect,
-            meta_top,
-            opt,
-            muted_pen,
+            suggestion=suggestion,
+            body_rect=body_rect,
+            meta_top=meta_top,
+            opt=opt,
+            muted_pen=muted_pen,
             blocked_missing=blocked_missing,
         )
 
@@ -194,12 +194,12 @@ class SuggestionDelegate(QStyledItemDelegate):
     def _draw_metadata_row(
         self,
         painter: QPainter,
+        *,
         suggestion: Suggestion,
         body_rect: QRect,
         meta_top: int,
         opt: QStyleOptionViewItem,
         muted_pen: QPen,
-        *,
         blocked_missing: tuple[str, ...] = (),
     ) -> None:
         meta_font = QFont(opt.font)

@@ -108,6 +108,15 @@ class RecorderBar(QWidget):
         self._count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._count_label.setProperty("muted", True)
 
+        # Persist-failure warning. Hidden while everything saves
+        # cleanly; turns visible (and stays visible for the rest of
+        # the recording) the moment any sink raises, so an operator
+        # whose events are silently failing to reach the database
+        # finds out DURING the exam, not after.
+        self._persist_warn_label = QLabel("", self)
+        self._persist_warn_label.setStyleSheet("color: #d70015; font-weight: bold;")
+        self._persist_warn_label.setVisible(False)
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(10)
@@ -119,6 +128,7 @@ class RecorderBar(QWidget):
         layout.addWidget(self._duration_label)
         layout.addStretch(0)
         layout.addWidget(self._name_label, 1)
+        layout.addWidget(self._persist_warn_label)
         layout.addWidget(self._count_label)
 
         self._duration_timer = QTimer(self)
@@ -166,6 +176,31 @@ class RecorderBar(QWidget):
 
     def set_event_count(self, count: int) -> None:
         self._count_label.setText(f"{count} event{'s' if count != 1 else ''}")
+
+    def set_persist_failures(self, count: int) -> None:
+        """Show / update the sink-failure warning.
+
+        ``count`` is the running total of persist failures for the
+        current recording. Zero hides the warning (fresh recording);
+        any positive value shows it with a tooltip pointing the
+        operator at the log file. The label never auto-clears during
+        a recording -- a capture pipeline that failed once cannot be
+        trusted to have failed only once.
+        """
+        if count <= 0:
+            self._persist_warn_label.setVisible(False)
+            self._persist_warn_label.setText("")
+            return
+        self._persist_warn_label.setText(
+            f"⚠ {count} event{'s' if count != 1 else ''} failed to save"
+        )
+        self._persist_warn_label.setToolTip(
+            "Some captured events could not be written to the session "
+            "database or screenshot folder. Check free disk space and "
+            "the log file (Help → Show logs folder). The on-disk "
+            "record for this recording may be incomplete."
+        )
+        self._persist_warn_label.setVisible(True)
 
     def toggle_record(self) -> None:
         """Flip the record button and fire ``record_toggled``.

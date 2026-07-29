@@ -41,7 +41,7 @@ def show_export_complete(
     The dialog is modal -- callers can fire-and-forget; control
     returns when the operator dismisses it.
     """
-    from PySide6.QtWidgets import QMessageBox  # noqa: PLC0415 - lazy Qt import
+    from PySide6.QtWidgets import QMessageBox
 
     box = QMessageBox(parent)  # type: ignore[arg-type]
     box.setIcon(QMessageBox.Icon.Information)

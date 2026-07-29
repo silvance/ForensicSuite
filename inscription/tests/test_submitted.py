@@ -12,6 +12,7 @@ Two layers covered:
 from __future__ import annotations
 
 import shutil
+import time as _time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -234,6 +235,8 @@ class _FakeRecorderBar:
         self.marker_requested = self._stub.marker_requested
 
     def set_session_name(self, _name: object) -> None: ...
+
+    def set_persist_failures(self, _count: int) -> None: ...
     def set_event_count(self, _count: int) -> None: ...
     def set_recording(self, _recording: bool) -> None: ...
 
@@ -492,5 +495,42 @@ def test_export_controller_methods_call_run_export_with_valid_kwargs(  # type: i
         controller.export_pdf()
         controller.export_html()
         controller.export_markdown()
+    finally:
+        repo.close()
+
+
+# ------------------------------------------------- recording boundary markers
+
+
+def test_recording_start_and_stop_emit_boundary_markers(qtbot, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    """Toggling a recording brackets its events with MARKER rows.
+
+    Two jobs: the exhibit documents exactly when capture was running,
+    and the markers hard-reset both generators' dedup machines so
+    events from different recordings on one session can never merge
+    into a single step ("Press Enter 2 times" spanning a stop/start
+    gap misrepresented continuity of action).
+    """
+    repo = SessionRepository.create(workspace_root=tmp_path, name="Boundaries")
+    try:
+        ws = _FakeWorkspace()
+        rb = _FakeRecorderBar()
+        controller = SessionController(
+            workspace=ws,  # type: ignore[arg-type]
+            recorder_bar=rb,  # type: ignore[arg-type]
+        )
+        controller._activate(repo)
+        controller._start_recording()
+        # Give the engine worker a moment to drain the start marker.
+        deadline = _time.monotonic() + 3.0
+        while _time.monotonic() < deadline:
+            if any(e.text == "— Recording started —" for e in repo.list_events()):
+                break
+            _time.sleep(0.05)
+        controller._stop_recording()
+
+        texts = [e.text for e in repo.list_events() if e.kind is EventKind.MARKER]
+        assert "— Recording started —" in texts
+        assert "— Recording stopped —" in texts
     finally:
         repo.close()

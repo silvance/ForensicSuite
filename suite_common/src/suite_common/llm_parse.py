@@ -94,6 +94,5 @@ def strip_code_fences(text: str) -> str:
     if first_nl == -1:
         return text
     inner = text[first_nl + 1 :]
-    if inner.endswith("```"):
-        inner = inner[:-3]
+    inner = inner.removesuffix("```")
     return inner.strip()

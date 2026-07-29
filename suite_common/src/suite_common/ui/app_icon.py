@@ -29,7 +29,6 @@ from PySide6.QtGui import (
 
 from suite_common.ui.style import LIGHT, Palette
 
-
 #: Sizes we render the icon at. Covers Windows taskbar (16, 24, 32, 48,
 #: 256) and macOS dock (32, 64, 128, 256, 512).
 _SIZES = (16, 24, 32, 48, 64, 128, 256, 512)

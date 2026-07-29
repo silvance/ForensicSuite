@@ -140,14 +140,14 @@ class LLMClient:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
         url = f"{self._base_url}/chat/completions"
-        req = urllib.request.Request(  # noqa: S310 - http(s) only via base_url validation
+        req = urllib.request.Request(
             url,
             data=json.dumps(body).encode("utf-8"),
             headers=headers,
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
                 # Read one byte past the cap to detect oversized
                 # responses without first buffering them entirely.
                 raw = resp.read(_MAX_RESPONSE_BYTES + 1)
@@ -229,11 +229,11 @@ def list_available_models(
     headers = {"Accept": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    req = urllib.request.Request(  # noqa: S310 - http(s) only via base_url validation
+    req = urllib.request.Request(
         url, headers=headers, method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             raw = resp.read(_MAX_RESPONSE_BYTES + 1)
             if len(raw) > _MAX_RESPONSE_BYTES:
                 msg = (
