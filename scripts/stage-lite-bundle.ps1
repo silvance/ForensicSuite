@@ -69,15 +69,28 @@ $version = [ordered]@{
 $version | ConvertTo-Json -Depth 5 |
     Set-Content -LiteralPath (Join-Path $BundleSrc "version.json") -Encoding utf8
 
+# manifest.json MUST match the schema prepare-bundle.ps1 writes --
+# install.ps1 parses ``$manifest.files`` and treats every on-disk file
+# missing from that map as "unexpected", so a flat {path: hash} dict
+# fails verification for the entire bundle.
 $manifestPath = Join-Path $BundleSrc "manifest.json"
 $entries = [ordered]@{}
+$bundleRootLength = $BundleSrc.TrimEnd('\').Length + 1
 Get-ChildItem -LiteralPath $BundleSrc -Recurse -File |
     Where-Object { $_.FullName -ne $manifestPath } |
     Sort-Object FullName |
     ForEach-Object {
-        $rel = $_.FullName.Substring($BundleSrc.Length + 1) -replace "\\", "/"
-        $entries[$rel] = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLower()
+        $rel = $_.FullName.Substring($bundleRootLength).Replace('\', '/')
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLower()
+        $entries[$rel] = "sha256:$hash"
     }
-$entries | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
+$manifestPayload = [ordered]@{
+    manifest_version = 1
+    git_sha          = $gitSha
+    created_at       = $version.build_timestamp
+    files            = $entries
+}
+$manifestPayload | ConvertTo-Json -Depth 5 |
+    Set-Content -LiteralPath $manifestPath -Encoding utf8
 
 Write-Host "Lite bundle staged: $BundleSrc" -ForegroundColor Green
