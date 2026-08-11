@@ -36,7 +36,11 @@
 #>
 param(
     [string]$Destination = "",
-    [switch]$SkipSetup
+    [switch]$SkipSetup,
+    # Also pack the staged bundle into a single InscriptionSuite-Setup.exe
+    # (self-extracting installer + launcher). Needs an exFAT/NTFS
+    # destination -- the exe exceeds FAT32's 4 GB file limit.
+    [switch]$SingleExe
 )
 
 $ErrorActionPreference = "Stop"
@@ -224,9 +228,23 @@ disk space on the destination.
     exit 1
 }
 
-# 6. Final report ---------------------------------------------------------
+# 6. Optional single-exe packaging ----------------------------------------
 
 $bundlePath = Join-Path $Destination "InscriptionSuite-Airgapped"
+if ($SingleExe) {
+    Write-Step "Packing single-file InscriptionSuite-Setup.exe"
+    & (Join-Path $ScriptRoot "make-single-exe.ps1") -StagedBundle $bundlePath
+    if ($LASTEXITCODE -ne 0) {
+        Show-Error -Title "Inscription Suite -- Build Bundle" -Body @"
+Single-exe packaging failed. The folder bundle at
+$bundlePath is still valid; see the console for the packaging error.
+"@
+        exit 1
+    }
+}
+
+# 7. Final report ---------------------------------------------------------
+
 Show-Info -Title "Inscription Suite -- Build Bundle" -Body @"
 Bundle ready at:
 
