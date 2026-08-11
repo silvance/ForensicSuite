@@ -80,9 +80,14 @@ $env:OLLAMA_KEEP_ALIVE = "10m"
 $env:SUITE_LLM_BASE_URL = "http://${BundledOllamaHost}/v1"
 
 $ollamaExe = Join-Path $Root "ollama\ollama.exe"
-if (-not (Test-Path $ollamaExe)) {
-    Write-Error "Bundled ollama.exe not found at $ollamaExe. The bundle is incomplete."
-    exit 1
+$HaveOllama = Test-Path $ollamaExe
+if (-not $HaveOllama) {
+    # Lite bundle: no bundled AI engine. The apps run fully without it
+    # (capture, notes, exports, reports); AI rewrite / refine offer a
+    # configuration hint when used. Clear the env override so the apps
+    # do not point at a server that will never exist.
+    Write-Host "No bundled Ollama (lite install) -- AI features disabled unless configured in-app." -ForegroundColor Yellow
+    Remove-Item Env:SUITE_LLM_BASE_URL -ErrorAction SilentlyContinue
 }
 
 # Already serving on OUR dedicated port? That should only happen if a
@@ -100,7 +105,9 @@ function Test-OllamaUp {
 }
 
 $ourProcess = $null
-if (Test-OllamaUp) {
+if (-not $HaveOllama) {
+    # Skip server startup + model pick entirely.
+} elseif (Test-OllamaUp) {
     Write-Host "Ollama already responding on $BundledOllamaHost (our dedicated port) -- reusing." -ForegroundColor Yellow
 } else {
     Write-Host "Starting bundled Ollama server..." -ForegroundColor Cyan
@@ -139,7 +146,7 @@ function Get-BundledModels {
     return $found | Sort-Object
 }
 
-$bundledModels = Get-BundledModels
+$bundledModels = if ($HaveOllama) { Get-BundledModels } else { @() }
 if ($bundledModels.Count -eq 0) {
     Write-Host "No bundled models found under .\models -- the apps will fall back to their built-in default." -ForegroundColor Yellow
 } elseif ($bundledModels.Count -eq 1) {

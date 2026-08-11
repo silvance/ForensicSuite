@@ -25,10 +25,20 @@ from suite_common.selfextract import (
     Action,
     cleanup_extraction,
     default_install_root,
+    download_file,
     extract_payload,
     open_payload,
     plan_action,
 )
+
+# Release metadata baked in at build time by the release workflow for
+# the ONLINE installer variant: the payload URL on the GitHub release
+# plus its SHA-256. Absent (ImportError) in the offline variant, which
+# carries the payload appended to the exe instead.
+try:
+    import _release_meta  # type: ignore[import-not-found]
+except ImportError:
+    _release_meta = None
 
 TITLE = "Inscription Suite"
 
@@ -65,17 +75,77 @@ def _run_installer(bundle_dir: Path) -> int:
     )
 
 
+def _download_payload_gui():
+    """Online-installer path: fetch the release payload with progress.
+
+    Returns an opened ZipFile, or None after showing an error dialog.
+    The expected SHA-256 is baked into this exe at release-build time,
+    so the download is pinned to exactly one payload regardless of
+    what the transport serves.
+    """
+    import tempfile as _tf
+
+    root = tk.Tk()
+    root.title(TITLE)
+    root.geometry("420x120")
+    root.resizable(False, False)
+    tk.Label(
+        root,
+        text=f"Downloading Inscription Suite {_release_meta.TAG}…",
+        anchor="w",
+    ).pack(fill="x", padx=16, pady=(16, 4))
+    bar = ttk.Progressbar(root, maximum=100)
+    bar.pack(fill="x", padx=16, pady=8)
+    status = tk.Label(root, text="Connecting…", anchor="w")
+    status.pack(fill="x", padx=16)
+    root.update()
+
+    dest = Path(_tf.gettempdir()) / f"InscriptionSuite-{_release_meta.TAG}.zip"
+
+    def _tick(done: int, total: int) -> None:
+        if total:
+            bar["value"] = done * 100 / total
+            status.configure(
+                text=f"Downloading… {done // 1_048_576} / {total // 1_048_576} MB"
+            )
+        else:
+            status.configure(text=f"Downloading… {done // 1_048_576} MB")
+        root.update()
+
+    try:
+        download_file(
+            _release_meta.PAYLOAD_URL,
+            dest,
+            expected_sha256=_release_meta.PAYLOAD_SHA256,
+            progress=_tick,
+        )
+        root.destroy()
+        return open_payload(dest)
+    except Exception as exc:  # noqa: BLE001 - stub must dialog, never die silently
+        try:
+            root.destroy()
+        except tk.TclError:
+            pass
+        _fail(str(exc))
+        return None
+
+
 def main() -> None:
     exe = Path(sys.executable if getattr(sys, "frozen", False) else __file__)
     try:
         zf = open_payload(exe)
     except Exception:  # noqa: BLE001 - stub must dialog, never die silently
-        _fail(
-            "This launcher has no embedded suite bundle.\n\n"
-            "It looks like a bare stub -- rebuild the single-file "
-            "package with Build-Bundle.bat -SingleExe."
-        )
-        return
+        if _release_meta is None:
+            _fail(
+                "This launcher has no embedded suite bundle and no "
+                "release metadata.\n\n"
+                "Rebuild with Build-Bundle.bat -SingleExe (offline) or "
+                "via the release workflow (online installer)."
+            )
+            return
+        zf = _download_payload_gui()
+        if zf is None:
+            return
 
     install_root = default_install_root()
     plan = plan_action(zf=zf, install_root=install_root)

@@ -37,7 +37,11 @@
 #>
 param(
     [Parameter(Mandatory = $true)][string]$StagedBundle,
-    [string]$Output = ""
+    [string]$Output = "",
+    # Also copy the intermediate payload zip here (the release
+    # workflow publishes it as its own asset for the online installer
+    # to download). Empty = discard with the work dir as before.
+    [string]$KeepPayloadZip = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,6 +101,8 @@ $stub = Join-Path $work "dist\InscriptionSuite-Setup.exe"
 
 # 3. Concatenate stub + payload.
 Write-Step "Concatenating stub + payload -> $Output"
+$outParent = Split-Path -Parent $Output
+if ($outParent) { New-Item -ItemType Directory -Force -Path $outParent | Out-Null }
 $out = [IO.File]::Create($Output)
 try {
     foreach ($part in @($stub, $zipPath)) {
@@ -116,6 +122,12 @@ print(f'verified: {len(names)} members')
 "@
 & python -c $verify $Output
 if ($LASTEXITCODE -ne 0) { throw "Verification failed -- do not ship this exe." }
+
+if ($KeepPayloadZip) {
+    Write-Step "Keeping payload zip at $KeepPayloadZip"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $KeepPayloadZip) | Out-Null
+    Copy-Item $zipPath $KeepPayloadZip -Force
+}
 
 $sizeGB = [math]::Round((Get-Item $Output).Length / 1GB, 2)
 Write-Host ""
