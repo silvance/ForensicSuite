@@ -26,9 +26,11 @@ launcher (every run after) on the air-gapped workstation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
+import urllib.request
 import zipfile
 from dataclasses import dataclass
 from enum import StrEnum
@@ -103,7 +105,10 @@ def _version_from_json(raw: bytes) -> str:
         return ""
     if not isinstance(data, dict):
         return ""
-    for key in ("bundle_version", "version", "built_at"):
+    # prepare-bundle.ps1 stamps git_sha + build_timestamp; older /
+    # other builders may use the generic names. git_sha is the
+    # strongest identity (exact source), so it wins.
+    for key in ("git_sha", "bundle_version", "version", "build_timestamp", "built_at"):
         value = data.get(key)
         if isinstance(value, str) and value:
             return value
@@ -215,3 +220,78 @@ def cleanup_extraction(dest: Path) -> None:
         shutil.rmtree(dest)
     except OSError as exc:
         logger.warning("Could not remove extraction cache %s: %s", dest, exc)
+
+
+#: Download chunk size. 1 MiB balances progress-callback granularity
+#: against syscall overhead on a multi-GB payload.
+_DOWNLOAD_CHUNK = 1024 * 1024
+
+
+class PayloadDownloadError(Exception):
+    """Network fetch or integrity verification of the payload failed."""
+
+
+def download_file(
+    url: str,
+    dest: Path,
+    *,
+    expected_sha256: str,
+    progress: Callable[[int, int], None] | None = None,
+    timeout_s: float = 60.0,
+) -> Path:
+    """Download ``url`` to ``dest`` and verify its SHA-256. Stdlib-only.
+
+    The expected hash is baked into the online-installer stub at
+    release-build time, so integrity doesn't depend on trusting the
+    transport or a checksum file fetched over the same channel: the
+    exe the operator chose to run pins exactly one payload.
+
+    ``progress`` receives ``(bytes_done, bytes_total)``;
+    ``bytes_total`` is 0 when the server sends no Content-Length.
+    Any failure (network, disk, hash mismatch) raises
+    :class:`PayloadDownloadError` with operator-facing text and
+    removes the partial file.
+    """
+    if not url.lower().startswith("https://"):
+        msg = f"Refusing non-HTTPS payload URL: {url}"
+        raise PayloadDownloadError(msg)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "InscriptionSuite-Setup"})
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            with dest.open("wb") as out:
+                while True:
+                    chunk = resp.read(_DOWNLOAD_CHUNK)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    digest.update(chunk)
+                    done += len(chunk)
+                    if progress is not None:
+                        progress(done, total)
+    except PayloadDownloadError:
+        raise
+    except Exception as exc:
+        dest.unlink(missing_ok=True)
+        msg = (
+            f"Could not download the suite payload.\n\n{exc}\n\n"
+            "Check the internet connection and try again. (This online "
+            "installer needs network access; for air-gapped machines "
+            "use the offline Setup exe or the USB bundle instead.)"
+        )
+        raise PayloadDownloadError(msg) from exc
+    actual = digest.hexdigest()
+    if actual.lower() != expected_sha256.lower():
+        dest.unlink(missing_ok=True)
+        msg = (
+            "Downloaded payload failed integrity verification.\n\n"
+            f"expected SHA-256: {expected_sha256}\n"
+            f"actual   SHA-256: {actual}\n\n"
+            "The download may have been corrupted or tampered with. "
+            "Re-download this installer from the official release page."
+        )
+        raise PayloadDownloadError(msg)
+    return dest

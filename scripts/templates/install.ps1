@@ -80,11 +80,17 @@ $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 # 1. Verify we are inside a real bundle --------------------------------------
 
 Write-Step "Checking bundle integrity"
-$expected = @("Inscription", "CaseForge", "CaseGuide", "ollama", "models", "start-suite.ps1")
+# ollama\ and models\ are OPTIONAL: the lite (GitHub release) bundle
+# ships apps-only, and the suite treats local AI as an optional
+# engine. Only the apps + launcher are load-bearing.
+$expected = @("Inscription", "CaseForge", "CaseGuide", "start-suite.ps1")
 foreach ($item in $expected) {
     if (-not (Test-Path (Join-Path $BundleSrc $item))) {
         throw "install.ps1 must run from inside the bundle directory. Missing: $item. Are you inside InscriptionSuite-Airgapped\?"
     }
+}
+if (-not (Test-Path (Join-Path $BundleSrc "ollama"))) {
+    Write-Host "  (lite bundle: no bundled Ollama/models -- AI features optional)" -ForegroundColor Yellow
 }
 Write-Host "  Bundle source: $BundleSrc"
 
