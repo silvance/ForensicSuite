@@ -61,6 +61,25 @@ jobs:
         run: |
           .\scripts\stage-lite-bundle.ps1 -Destination "$env:RUNNER_TEMP\stage" -Tag "${{ steps.tag.outputs.tag }}"
 
+      # Run the real installer against the staged bundle before anything
+      # is published. This is exactly the path a user hits after
+      # extraction, so a manifest-schema drift between
+      # stage-lite-bundle.ps1 and install.ps1 (which once shipped and
+      # failed on a real workstation with 744 "unexpected file" errors)
+      # fails the release build here instead.
+      - name: Smoke-test install.ps1 against the staged bundle
+        shell: pwsh
+        run: |
+          $bundle = "$env:RUNNER_TEMP\stage\InscriptionSuite-Airgapped"
+          $target = "$env:RUNNER_TEMP\install-test"
+          # A throw inside install.ps1 (e.g. failed manifest verification)
+          # propagates as a terminating error and fails this step.
+          & "$bundle\install.ps1" -InstallRoot $target -Force
+          foreach ($f in @("Inscription\Inscription.exe", "CaseForge\CaseForge.exe", "CaseGuide\CaseGuide.exe", "start-suite.ps1", "version.json")) {
+            if (-not (Test-Path (Join-Path $target $f))) { throw "Smoke install missing $f" }
+          }
+          Write-Host "Smoke install OK: bundle verified and installed to $target"
+
       - name: Build payload zip + offline Setup.exe
         shell: pwsh
         run: |

@@ -128,6 +128,14 @@ if ($SkipVerify) {
     } catch {
         throw "manifest.json is present but unreadable: $_"
     }
+    # Guard the schema before walking it: a manifest without a
+    # populated ``files`` map (wrong tool version, hand-edited) would
+    # otherwise yield an empty known-file set and mislabel every real
+    # file "unexpected" -- a confusing wall of errors for what is
+    # really a malformed manifest.
+    if (-not $manifest.files -or -not ($manifest.files.PSObject.Properties | Select-Object -First 1)) {
+        throw "manifest.json has no 'files' map -- it was written by an incompatible bundling tool, not corrupted in transfer. Rebuild the bundle with the current scripts."
+    }
     $entries = $manifest.files.PSObject.Properties
     $expectedPaths = New-Object System.Collections.Generic.HashSet[string]
     $count = 0
