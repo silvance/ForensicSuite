@@ -75,7 +75,7 @@ jobs:
           # A throw inside install.ps1 (e.g. failed manifest verification)
           # propagates as a terminating error and fails this step.
           & "$bundle\install.ps1" -InstallRoot $target -Force
-          foreach ($f in @("Inscription\Inscription.exe", "CaseForge\CaseForge.exe", "CaseGuide\CaseGuide.exe", "start-suite.ps1", "version.json")) {
+          foreach ($f in @("Inscription\Inscription.exe", "CaseForge\CaseForge.exe", "CaseGuide\CaseGuide.exe", "start-suite.ps1", "enable-ai.ps1", "version.json")) {
             if (-not (Test-Path (Join-Path $target $f))) { throw "Smoke install missing $f" }
           }
           Write-Host "Smoke install OK: bundle verified and installed to $target"
@@ -135,7 +135,7 @@ jobs:
             | InscriptionSuite-Payload.zip | The raw bundle (what the online installer downloads) |
             | SHA256SUMS.txt | Verify any download: `Get-FileHash <file> -Algorithm SHA256` |
 
-            These are **lite** builds: the apps plus installer, **no bundled AI models** (GitHub caps release assets at 2 GB). Everything works out of the box except the optional AI rewrite/refine and audio transcription — enable those by installing [Ollama](https://ollama.com) and/or [Whisper](https://github.com/silvance/whisper.py) locally, or use `Build-Bundle.bat` to create the full model-bearing USB bundle for air-gapped workstations.
+            These are **lite** builds: the apps plus installer, **no bundled AI models** (GitHub caps release assets at 2 GB). Everything works out of the box except the optional AI rewrite/refine and audio transcription. To add local AI after installing: pick **[A] Enable AI features** in the launcher menu on a machine with internet — it downloads the official Ollama runtime + a model (~6.5 GB, one time) into the install, after which AI runs fully offline. Audio transcription needs [Whisper](https://github.com/silvance/whisper.py) separately. For a fully pre-loaded air-gapped USB bundle, use `Build-Bundle.bat`.
 
             SmartScreen note: unsigned executables show a warning on first run — "More info" → "Run anyway".
           files: |
