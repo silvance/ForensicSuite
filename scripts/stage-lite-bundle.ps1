@@ -50,7 +50,7 @@ foreach ($app in $apps) {
     Copy-Item -Recurse (Join-Path $RepoRoot $app.Dist) (Join-Path $BundleSrc $app.Name)
 }
 $templates = Join-Path $PSScriptRoot "templates"
-foreach ($t in @("Install-Suite.cmd", "install.ps1", "start-suite.ps1", "airgapped-README.txt")) {
+foreach ($t in @("Install-Suite.cmd", "install.ps1", "start-suite.ps1", "enable-ai.ps1", "airgapped-README.txt")) {
     Copy-Item (Join-Path $templates $t) (Join-Path $BundleSrc $t)
 }
 

@@ -81,12 +81,16 @@ $env:SUITE_LLM_BASE_URL = "http://${BundledOllamaHost}/v1"
 
 $ollamaExe = Join-Path $Root "ollama\ollama.exe"
 $HaveOllama = Test-Path $ollamaExe
+$enableAiScript = Join-Path $Root "enable-ai.ps1"
 if (-not $HaveOllama) {
     # Lite bundle: no bundled AI engine. The apps run fully without it
     # (capture, notes, exports, reports); AI rewrite / refine offer a
     # configuration hint when used. Clear the env override so the apps
     # do not point at a server that will never exist.
     Write-Host "No bundled Ollama (lite install) -- AI features disabled unless configured in-app." -ForegroundColor Yellow
+    if (Test-Path $enableAiScript) {
+        Write-Host "On a machine with internet, pick [A] from the menu below to download them (~6.5 GB, one time)." -ForegroundColor Yellow
+    }
     Remove-Item Env:SUITE_LLM_BASE_URL -ErrorAction SilentlyContinue
 }
 
@@ -183,6 +187,10 @@ $apps = @(
     @{ Key = "3"; Label = "CaseGuide (suggestion coach)";        Exe = "CaseGuide\CaseGuide.exe"     }
 )
 
+# Offer AI enablement only when it is both absent and installable
+# (the enable-ai.ps1 helper ships with lite bundles).
+$offerEnableAi = (-not $HaveOllama) -and (Test-Path $enableAiScript)
+
 try {
     while ($true) {
         Write-Host ""
@@ -191,11 +199,32 @@ try {
         foreach ($a in $apps) {
             Write-Host ("  [{0}] {1}" -f $a.Key, $a.Label)
         }
+        if ($offerEnableAi) {
+            Write-Host "  [A] Enable AI features (downloads Ollama + a model -- needs internet)"
+        }
         Write-Host "  [Q] Quit (also stops the bundled Ollama server)"
         Write-Host ""
         $choice = Read-Host "Pick"
 
         if ($choice -ieq "q") { break }
+
+        if ($offerEnableAi -and $choice -ieq "a") {
+            try {
+                & $enableAiScript
+            } catch {
+                Write-Host "Enable AI failed: $_" -ForegroundColor Red
+                Write-Host "The apps still work without AI; pick [A] to retry once the issue is fixed." -ForegroundColor Yellow
+                continue
+            }
+            # The server/model environment is set up at launcher start,
+            # so hand off to a fresh copy of ourselves rather than
+            # duplicating that logic here.
+            Write-Host "Restarting the launcher to pick up the new AI components..." -ForegroundColor Green
+            Start-Process -FilePath "powershell.exe" `
+                -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"" `
+                -WorkingDirectory $Root
+            exit 0
+        }
 
         $picked = $apps | Where-Object { $_.Key -eq $choice }
         if (-not $picked) {

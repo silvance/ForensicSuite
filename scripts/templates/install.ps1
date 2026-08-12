@@ -264,6 +264,20 @@ try {
     throw "Atomic swap failed: $_. The previous install should still be intact at $InstallRoot."
 }
 if (Test-Path $rollbackRoot) {
+    # Preserve downloaded AI components across upgrades: enable-ai.ps1
+    # may have added ollama\ / models\ to the previous install, and a
+    # lite bundle carries neither -- deleting the old install unmodified
+    # would silently throw away gigabytes of runtime + model weights.
+    # Salvage only AFTER the swap has succeeded, so a failed swap still
+    # rolls back to a complete previous install.
+    foreach ($aiDir in @("ollama", "models")) {
+        $salvage = Join-Path $rollbackRoot $aiDir
+        $landed = Join-Path $InstallRoot $aiDir
+        if ((Test-Path $salvage) -and -not (Test-Path $landed)) {
+            Write-Host "  Preserving downloaded $aiDir\ from the previous install."
+            Move-Item -LiteralPath $salvage -Destination $landed
+        }
+    }
     Remove-Item -Recurse -Force $rollbackRoot -ErrorAction SilentlyContinue
 }
 

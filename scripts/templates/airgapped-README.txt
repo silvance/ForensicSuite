@@ -51,7 +51,8 @@ The launcher will:
   1. Re-launch itself elevated (one UAC prompt) so the UI-automation
      resolver can read elevated forensic tools like AXIOM Examine.
   2. Point Ollama at the .\models directory inside this folder.
-  3. Start a local Ollama server on 127.0.0.1:11434.
+  3. Start a local Ollama server on 127.0.0.1:11435 (a dedicated port,
+     so a system-wide Ollama install is never touched).
   4. Wait until the server reports ready.
   5. If more than one model is bundled, ask which one the apps should
      use this session.
@@ -73,6 +74,14 @@ Both are cached under .\models. The launcher asks which to use; the
 apps read the choice from the SUITE_LLM_MODEL env var. You can still
 override per app from Settings -- the Model field is an editable
 dropdown populated from whatever Ollama lists.
+
+Lite bundles (GitHub release downloads) ship WITHOUT ollama\ and
+models\ -- release assets cap at 2 GB. The apps all work; AI rewrite /
+refine / suggestions stay off until enabled. On a machine with
+internet, pick [A] Enable AI features from the launcher menu (or run
+enable-ai.ps1) to download the official Ollama runtime plus a model
+(~6.5 GB, one time) into the install. After that, AI runs fully
+offline like the full bundle.
 
 Troubleshooting
 ---------------
