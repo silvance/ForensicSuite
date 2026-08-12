@@ -150,7 +150,12 @@ function Get-BundledModels {
     return $found | Sort-Object
 }
 
-$bundledModels = if ($HaveOllama) { Get-BundledModels } else { @() }
+# @() at the call site is load-bearing: PowerShell unrolls a
+# one-element array returned from a function into a bare string, and
+# indexing a string yields its first CHARACTER -- a single-model
+# bundle exported SUITE_LLM_MODEL="q" instead of the model name,
+# which broke AI rewrite on every single-model install.
+$bundledModels = if ($HaveOllama) { @(Get-BundledModels) } else { @() }
 if ($bundledModels.Count -eq 0) {
     Write-Host "No bundled models found under .\models -- the apps will fall back to their built-in default." -ForegroundColor Yellow
 } elseif ($bundledModels.Count -eq 1) {

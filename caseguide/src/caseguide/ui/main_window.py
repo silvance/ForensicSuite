@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from suite_common import read_version_info
+from suite_common.llm import available_models_hint
 from suite_common.ui.export_success import show_export_complete
 
 from caseguide import __version__
@@ -529,10 +530,20 @@ def _friendly_llm_error(raw_message: str, *, base_url: str) -> str:
             f"Original error: {raw_message}"
         )
     if "model not found" in lower or "no such model" in lower or "http 404" in lower:
+        # A 404 means the server answered; probe it so the dialog can
+        # name the models it does carry (mirrors Inscription's helper).
+        hint = available_models_hint(base_url)
+        action = (
+            "Switch to one of those in Edit → Settings, or pull the "
+            "missing model (e.g. `ollama pull <name>`).\n\n"
+            if hint
+            else "Pull it (e.g. `ollama pull <name>`) or change the "
+            "model name in Edit → Settings.\n\n"
+        )
         return (
             "The configured model isn't available on the LLM server.\n\n"
-            "Pull it (e.g. `ollama pull gemma4`) or change the model "
-            "name in Edit → Settings.\n\n"
-            f"Original error: {raw_message}"
+            + hint
+            + action
+            + f"Original error: {raw_message}"
         )
     return raw_message
