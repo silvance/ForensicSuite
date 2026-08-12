@@ -15,6 +15,8 @@ even after the automatic retry).
 
 from __future__ import annotations
 
+from suite_common.llm import available_models_hint
+
 
 def friendly_llm_error(raw_message: str, *, base_url: str) -> str:
     """Translate raw LLM exception text into a guided message.
@@ -48,11 +50,22 @@ def friendly_llm_error(raw_message: str, *, base_url: str) -> str:
             f"Original error: {raw_message}"
         )
     if "http 404" in lower or "model not found" in lower or "no such model" in lower:
+        # A 404 means the server itself answered, so a quick probe can
+        # name the models it does carry -- turning a dead-end dialog
+        # into a fix the operator can apply immediately.
+        hint = available_models_hint(base_url)
+        action = (
+            "Switch to one of those in Edit → Settings → LLM, or pull "
+            "the missing model (e.g. `ollama pull <name>`).\n\n"
+            if hint
+            else "Pull it (e.g. `ollama pull <name>`) or change the "
+            "model name in Edit → Settings → LLM.\n\n"
+        )
         return (
             "The configured model isn't available on the LLM server.\n\n"
-            "Pull it (e.g. `ollama pull gemma2`) or change the model "
-            "name in Edit → Settings → LLM.\n\n"
-            f"Original error: {raw_message}"
+            + hint
+            + action
+            + f"Original error: {raw_message}"
         )
     if (
         "missing top-level 'steps' key" in lower

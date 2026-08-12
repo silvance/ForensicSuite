@@ -14,6 +14,7 @@ maps to a real failure mode the field has hit:
 
 from __future__ import annotations
 
+from inscription.ui import controller_errors
 from inscription.ui.controller import _friendly_llm_error
 
 
@@ -45,6 +46,27 @@ def test_404_maps_to_pull_hint() -> None:
     )
     assert "isn't available on the LLM server" in msg
     assert "ollama pull" in msg
+
+
+def test_404_lists_available_models_when_probe_succeeds(monkeypatch) -> None:
+    """The 404 dialog names the models the server DOES carry -- the
+    field case was a launcher exporting a broken model name, leaving
+    the operator staring at 'gemma4:latest not found' with no clue
+    the store held a perfectly good qwen."""
+    monkeypatch.setattr(
+        controller_errors,
+        "available_models_hint",
+        lambda base_url, **_kw: (
+            "Models this server does have: qwen2.5:7b-instruct-q5_K_M\n\n"
+        ),
+    )
+    msg = controller_errors.friendly_llm_error(
+        "LLM HTTP 404 from http://127.0.0.1:11435/v1/chat/completions: "
+        "model 'gemma4:latest' not found",
+        base_url="http://127.0.0.1:11435/v1",
+    )
+    assert "qwen2.5:7b-instruct-q5_K_M" in msg
+    assert "Switch to one of those" in msg
 
 
 def test_missing_steps_key_does_not_dump_payload() -> None:

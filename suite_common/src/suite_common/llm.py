@@ -275,3 +275,30 @@ def list_available_models(
             if isinstance(mid, str) and mid.strip():
                 ids.append(mid.strip())
     return sorted(set(ids))
+
+
+#: Cap on model names listed inline in an error dialog before eliding.
+_HINT_MAX_MODELS = 6
+
+
+def available_models_hint(base_url: str, *, timeout_s: float = 2.0) -> str:
+    """Dialog fragment naming the models the endpoint DOES advertise.
+
+    Built for model-not-found error paths: a 404 proves the server is
+    reachable, so a quick ``/models`` probe can turn "your model isn't
+    here" into "here's what is" -- the difference between a dead end
+    and a fix the operator can apply in Settings. Returns ``""`` on
+    any failure (server died between the 404 and this probe, empty
+    store) so callers can never crash inside their error handling;
+    the short timeout keeps a GUI-thread caller responsive.
+    """
+    try:
+        models = list_available_models(base_url=base_url, timeout_s=timeout_s)
+    except Exception:  # noqa: BLE001 - best-effort hint; never raise from error paths
+        return ""
+    if not models:
+        return ""
+    shown = ", ".join(models[:_HINT_MAX_MODELS])
+    if len(models) > _HINT_MAX_MODELS:
+        shown += f", … ({len(models) - _HINT_MAX_MODELS} more)"
+    return f"Models this server does have: {shown}\n\n"

@@ -23,6 +23,7 @@ from suite_common.llm import (
     LLMConfigError,
     LLMRequestError,
     LLMResponseError,
+    available_models_hint,
     list_available_models,
 )
 
@@ -265,3 +266,49 @@ def test_list_available_models_validates_base_url() -> None:
         list_available_models(base_url="", timeout_s=2)
     with pytest.raises(LLMConfigError):
         list_available_models(base_url="file:///etc/passwd", timeout_s=2)
+
+
+# ---- available_models_hint -----------------------------------------------
+
+
+def test_available_models_hint_names_the_models() -> None:
+    def handler(h: BaseHTTPRequestHandler) -> None:
+        _send_json(
+            h, 200,
+            {"data": [{"id": "qwen2.5:7b-instruct-q5_K_M"}, {"id": "granite4:tiny-h"}]},
+        )
+
+    with _models_server(handler) as url:
+        hint = available_models_hint(url, timeout_s=2)
+
+    assert "Models this server does have:" in hint
+    assert "qwen2.5:7b-instruct-q5_K_M" in hint
+    assert "granite4:tiny-h" in hint
+
+
+def test_available_models_hint_elides_long_lists() -> None:
+    def handler(h: BaseHTTPRequestHandler) -> None:
+        _send_json(h, 200, {"data": [{"id": f"model-{i:02d}"} for i in range(9)]})
+
+    with _models_server(handler) as url:
+        hint = available_models_hint(url, timeout_s=2)
+
+    assert "model-05" in hint
+    assert "model-06" not in hint
+    assert "(3 more)" in hint
+
+
+def test_available_models_hint_swallows_every_failure() -> None:
+    """The hint is built INSIDE error handling -- it must never raise,
+    and it must degrade to empty rather than inject noise."""
+    # Server unreachable (nothing listens on this port).
+    assert available_models_hint("http://127.0.0.1:1/v1", timeout_s=0.2) == ""
+    # Config-invalid URL.
+    assert available_models_hint("", timeout_s=1) == ""
+
+    # Server reachable but the store is empty.
+    def handler(h: BaseHTTPRequestHandler) -> None:
+        _send_json(h, 200, {"data": []})
+
+    with _models_server(handler) as url:
+        assert available_models_hint(url, timeout_s=2) == ""
