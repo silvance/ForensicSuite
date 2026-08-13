@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import QDialog, QLabel, QProgressBar, QVBoxLayout
+from suite_common.ui import worker_registry
 
 from inscription.steps import generate_steps
 
@@ -52,6 +53,7 @@ class RegenerateWorker(QThread):
     ) -> None:
         super().__init__(parent)
         self._repository = repository
+        worker_registry.track(self)
 
     def run(self) -> None:
         try:

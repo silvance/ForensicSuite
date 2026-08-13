@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from suite_common.ui import worker_registry
 
 if TYPE_CHECKING:
     from inscription.llm import StepRewriter
@@ -41,6 +42,7 @@ class RewriteWorker(QThread):
     def __init__(self, rewriter: StepRewriter, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._rewriter = rewriter
+        worker_registry.track(self)
 
     def run(self) -> None:
         try:

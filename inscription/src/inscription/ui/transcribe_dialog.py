@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 from suite_common.transcribe import TranscriptionError, transcribe_file
+from suite_common.ui import worker_registry
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -49,6 +50,7 @@ class TranscribeWorker(QThread):
         super().__init__(parent)
         self._media_path = media_path
         self._model = model
+        worker_registry.track(self)
 
     def run(self) -> None:
         try:

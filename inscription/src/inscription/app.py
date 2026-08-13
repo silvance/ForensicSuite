@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
+from suite_common.ui import worker_registry
 
 from inscription import __version__
 from inscription.logging_setup import configure_logging
@@ -84,6 +85,13 @@ def main(argv: list[str] | None = None) -> int:
 
     rc = app.exec()
     logger.info("Inscription exited with code %d", rc)
+    # Backstop against zombie processes: a cancelled rewrite /
+    # transcription lets its worker run on in the background by design,
+    # but once the event loop is done nothing may keep a headless (and,
+    # under the air-gapped launcher, elevated) Inscription.exe alive --
+    # it holds the global input hooks and every loaded DLL, blocking
+    # the suite installer's upgrade swap. May not return.
+    worker_registry.shutdown_lingering_workers(rc)
     return rc
 
 
