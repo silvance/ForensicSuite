@@ -259,9 +259,23 @@ function Get-InstallRootProcesses {
     param([string]$Root)
     $prefix = ($Root.TrimEnd('\') + '\').ToLower()
     @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-        $exePath = $null
-        try { $exePath = $_.Path } catch { }  # access denied on protected processes
-        $exePath -and $exePath.ToLower().StartsWith($prefix)
+        $holds = $false
+        try {
+            if ($_.Path -and $_.Path.ToLower().StartsWith($prefix)) { $holds = $true }
+        } catch { }  # access denied on protected processes
+        if (-not $holds) {
+            # A process can also pin the tree via a DLL it loaded from
+            # inside it, without its exe living there.
+            try {
+                foreach ($m in $_.Modules) {
+                    if ($m.FileName -and $m.FileName.ToLower().StartsWith($prefix)) {
+                        $holds = $true
+                        break
+                    }
+                }
+            } catch { }  # access denied / cross-bitness module enumeration
+        }
+        $holds
     })
 }
 
@@ -315,18 +329,47 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         if (-not (Test-Path $InstallRoot) -and (Test-Path $rollbackRoot)) {
             Rename-Item -LiteralPath $rollbackRoot -NewName (Split-Path -Leaf $InstallRoot) -ErrorAction SilentlyContinue
         }
-        throw @"
-Atomic swap failed after $maxAttempts attempts: $_
-The previous install should still be intact at $InstallRoot.
 
-Something still has a file open inside that folder. Common holders:
+        # Rename-swap is unavailable. A directory RENAME needs zero open
+        # handles anywhere in the tree -- an Explorer window merely
+        # browsing the folder (or the search indexer touching it) is
+        # enough to block it, and such holders show up in no process
+        # list. Overwriting the individual FILES only needs those files
+        # closed, so fall back to mirroring the staged tree into place
+        # with robocopy. Not atomic, but the alternative is a dead end,
+        # and the staged source was verified before we got here.
+        Write-Host "  Rename swap blocked; updating files in place with robocopy instead..." -ForegroundColor Yellow
+        $xd = @()
+        foreach ($aiDir in @("ollama", "models")) {
+            # Same AI-component preservation rule as the salvage below:
+            # a lite bundle must not /MIR away downloaded runtime/models.
+            if ((Test-Path (Join-Path $InstallRoot $aiDir)) -and -not (Test-Path (Join-Path $stagingRoot $aiDir))) {
+                $xd += (Join-Path $InstallRoot $aiDir)
+            }
+        }
+        $roboArgs = @($stagingRoot, $InstallRoot, "/MIR", "/R:2", "/W:2", "/NFL", "/NDL", "/NJH", "/NP")
+        if ($xd.Count -gt 0) { $roboArgs += "/XD"; $roboArgs += $xd }
+        & robocopy @roboArgs
+        # Robocopy exit codes 0-7 are success grades; 8+ means files failed.
+        if ($LASTEXITCODE -ge 8) {
+            throw @"
+Swap failed after $maxAttempts rename attempts AND the in-place file
+update could not complete (robocopy exit $LASTEXITCODE). The previous
+install should still be substantially intact at $InstallRoot.
+
+Something is holding files in that folder. Common holders:
   - The suite launcher window (its working directory is the install
     folder -- Quit it, and close any PowerShell/cmd window sitting
     in that folder)
   - An Explorer window open inside the install folder
   - Antivirus mid-scan (wait a minute and re-run)
-Close the holder and re-run the installer.
+Close the holder and re-run the installer -- or reboot and re-run,
+which clears every orphaned handle.
 "@
+        }
+        Write-Host "  In-place update complete." -ForegroundColor Green
+        Remove-Item -Recurse -Force $stagingRoot -ErrorAction SilentlyContinue
+        break
     }
 }
 if (Test-Path $rollbackRoot) {
