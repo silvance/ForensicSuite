@@ -113,6 +113,12 @@ if (-not $HaveOllama) {
     # Skip server startup + model pick entirely.
 } elseif (Test-OllamaUp) {
     Write-Host "Ollama already responding on $BundledOllamaHost (our dedicated port) -- reusing." -ForegroundColor Yellow
+    # Adopt the running server so [Q]uit stops it. Without this, a
+    # server left behind by a launcher window closed via the X button
+    # is never stopped by anyone -- and its open handles inside the
+    # install folder make the next upgrade's folder swap fail.
+    $ourProcess = @(Get-Process -Name "ollama" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and ($_.Path -ieq $ollamaExe) }) | Select-Object -First 1
 } else {
     Write-Host "Starting bundled Ollama server..." -ForegroundColor Cyan
     $ourProcess = Start-Process -FilePath $ollamaExe `

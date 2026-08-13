@@ -247,21 +247,87 @@ $totalBytes = (Get-ChildItem -Recurse -File $stagingRoot | Measure-Object -Prope
 $totalGB = [math]::Round($totalBytes / 1GB, 2)
 Write-Host "  Staged $totalGB GB."
 
+# 3a. Stop suite processes still running from the old install ---------------
+# Renaming a directory fails when ANY file inside is open. The usual
+# invisible culprit is our own ollama.exe: the launcher's spawned
+# server survives the console being closed with the X button, and a
+# "reused" server from an earlier session is never stopped at all.
+# The suite apps themselves linger the same way. All of these run
+# from inside $InstallRoot, so they're detectable by executable path.
+
+function Get-InstallRootProcesses {
+    param([string]$Root)
+    $prefix = ($Root.TrimEnd('\') + '\').ToLower()
+    @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        $exePath = $null
+        try { $exePath = $_.Path } catch { }  # access denied on protected processes
+        $exePath -and $exePath.ToLower().StartsWith($prefix)
+    })
+}
+
+if (Test-Path $InstallRoot) {
+    # @() at the call site: PowerShell unrolls one-element function
+    # results into a scalar (same bug class as the launcher's model
+    # name export -- see start-suite.ps1).
+    $running = @(Get-InstallRootProcesses -Root $InstallRoot)
+    if ($running.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Still running from the existing install:" -ForegroundColor Yellow
+        $running | ForEach-Object { Write-Host ("  {0} (PID {1})" -f $_.ProcessName, $_.Id) }
+        if (-not $Force) {
+            $reply = Read-Host "Close them now so the upgrade can proceed? (y/N)"
+            if ($reply -notmatch '^(y|Y)') {
+                Remove-Item -Recurse -Force $stagingRoot -ErrorAction SilentlyContinue
+                throw "Upgrade needs those programs closed. Close them (Quit the suite launcher too) and re-run the installer."
+            }
+        }
+        foreach ($proc in $running) {
+            Write-Host "  Stopping $($proc.ProcessName) (PID $($proc.Id))..."
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        }
+        # Give Windows a beat to release the file handles.
+        $null = $running | Where-Object { -not $_.HasExited } |
+            ForEach-Object { $_.WaitForExit(10000) }
+    }
+}
+
 Write-Step "Swapping new install in"
-try {
-    if (Test-Path $InstallRoot) {
-        # Move-aside the old install rather than delete, so we can roll
-        # back if the rename of the new one fails (race with AV scanner,
-        # file handles still open, etc.).
-        Rename-Item -LiteralPath $InstallRoot -NewName (Split-Path -Leaf $rollbackRoot) -ErrorAction Stop
+# A couple of retries absorbs the transient cases: AV scanners touching
+# freshly-written files, and handle teardown from processes stopped above.
+$maxAttempts = 3
+for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+    try {
+        if (Test-Path $InstallRoot) {
+            # Move-aside the old install rather than delete, so we can roll
+            # back if the rename of the new one fails (race with AV scanner,
+            # file handles still open, etc.).
+            Rename-Item -LiteralPath $InstallRoot -NewName (Split-Path -Leaf $rollbackRoot) -ErrorAction Stop
+        }
+        Rename-Item -LiteralPath $stagingRoot -NewName (Split-Path -Leaf $InstallRoot) -ErrorAction Stop
+        break
+    } catch {
+        if ($attempt -lt $maxAttempts) {
+            Write-Host "  Swap attempt $attempt failed ($($_.Exception.Message.Trim())); retrying in 2s..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 2
+            continue
+        }
+        # Best-effort rollback: put the old install back.
+        if (-not (Test-Path $InstallRoot) -and (Test-Path $rollbackRoot)) {
+            Rename-Item -LiteralPath $rollbackRoot -NewName (Split-Path -Leaf $InstallRoot) -ErrorAction SilentlyContinue
+        }
+        throw @"
+Atomic swap failed after $maxAttempts attempts: $_
+The previous install should still be intact at $InstallRoot.
+
+Something still has a file open inside that folder. Common holders:
+  - The suite launcher window (its working directory is the install
+    folder -- Quit it, and close any PowerShell/cmd window sitting
+    in that folder)
+  - An Explorer window open inside the install folder
+  - Antivirus mid-scan (wait a minute and re-run)
+Close the holder and re-run the installer.
+"@
     }
-    Rename-Item -LiteralPath $stagingRoot -NewName (Split-Path -Leaf $InstallRoot) -ErrorAction Stop
-} catch {
-    # Best-effort rollback: put the old install back.
-    if (-not (Test-Path $InstallRoot) -and (Test-Path $rollbackRoot)) {
-        Rename-Item -LiteralPath $rollbackRoot -NewName (Split-Path -Leaf $InstallRoot) -ErrorAction SilentlyContinue
-    }
-    throw "Atomic swap failed: $_. The previous install should still be intact at $InstallRoot."
 }
 if (Test-Path $rollbackRoot) {
     # Preserve downloaded AI components across upgrades: enable-ai.ps1
