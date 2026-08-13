@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from suite_common.ui import worker_registry
 
 from inscription.verify import verify_session_integrity
 
@@ -51,6 +52,7 @@ class VerifyWorker(QThread):
     ) -> None:
         super().__init__(parent)
         self._repository = repository
+        worker_registry.track(self)
 
     def run(self) -> None:
         try:

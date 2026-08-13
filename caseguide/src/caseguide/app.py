@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
+from suite_common.ui import worker_registry
 
 from caseguide import __version__
 from caseguide.logging_setup import configure_logging
@@ -67,6 +68,12 @@ def main(argv: list[str] | None = None) -> int:
     MainWindow(case_dir=args.case_dir)
     rc = app.exec()
     logger.info("CaseGuide exited with code %d", rc)
+    # Backstop against zombie processes: a cancelled LLM refine lets its
+    # worker run on by design, but nothing may keep a headless (and,
+    # under the air-gapped launcher, elevated) CaseGuide.exe alive after
+    # the event loop -- it blocks the suite installer's upgrade swap.
+    # May not return.
+    worker_registry.shutdown_lingering_workers(rc)
     return rc
 
 

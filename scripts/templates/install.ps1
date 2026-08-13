@@ -255,15 +255,27 @@ Write-Host "  Staged $totalGB GB."
 # The suite apps themselves linger the same way. All of these run
 # from inside $InstallRoot, so they're detectable by executable path.
 
+# Process names the suite can leave running from the install folder.
+# Needed because the launcher SELF-ELEVATES: apps it starts run as
+# administrator, and an unelevated installer gets access-denied trying
+# to read an elevated process's Path or Modules -- making path-based
+# detection silently blind to exactly the processes most likely to be
+# holding the folder. Name matching still works unelevated.
+$SuiteProcessNames = @("Inscription", "CaseForge", "CaseGuide", "ollama", "Whispr")
+
 function Get-InstallRootProcesses {
     param([string]$Root)
     $prefix = ($Root.TrimEnd('\') + '\').ToLower()
     @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
         $holds = $false
+        $pathReadable = $false
         try {
-            if ($_.Path -and $_.Path.ToLower().StartsWith($prefix)) { $holds = $true }
-        } catch { }  # access denied on protected processes
-        if (-not $holds) {
+            if ($_.Path) {
+                $pathReadable = $true
+                if ($_.Path.ToLower().StartsWith($prefix)) { $holds = $true }
+            }
+        } catch { }  # access denied on elevated/protected processes
+        if (-not $holds -and $pathReadable) {
             # A process can also pin the tree via a DLL it loaded from
             # inside it, without its exe living there.
             try {
@@ -274,6 +286,12 @@ function Get-InstallRootProcesses {
                     }
                 }
             } catch { }  # access denied / cross-bitness module enumeration
+        }
+        if (-not $holds -and -not $pathReadable -and ($SuiteProcessNames -contains $_.ProcessName)) {
+            # Path unreadable (almost certainly elevated) + a suite
+            # process name: assume it's ours. Worst case we ask before
+            # stopping a same-named process from elsewhere.
+            $holds = $true
         }
         $holds
     })
@@ -295,13 +313,35 @@ if (Test-Path $InstallRoot) {
                 throw "Upgrade needs those programs closed. Close them (Quit the suite launcher too) and re-run the installer."
             }
         }
+        $needElevation = @()
         foreach ($proc in $running) {
             Write-Host "  Stopping $($proc.ProcessName) (PID $($proc.Id))..."
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            try {
+                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+            } catch {
+                # Access denied: the process is elevated (the launcher
+                # self-elevates the apps it starts) and this installer
+                # isn't. Collect and stop them via one elevated helper.
+                $needElevation += $proc.Id
+            }
         }
-        # Give Windows a beat to release the file handles.
-        $null = $running | Where-Object { -not $_.HasExited } |
-            ForEach-Object { $_.WaitForExit(10000) }
+        if ($needElevation.Count -gt 0) {
+            Write-Host "  Those run elevated; stopping them needs one UAC approval..." -ForegroundColor Yellow
+            try {
+                Start-Process -FilePath "powershell.exe" -Verb RunAs -Wait -WindowStyle Hidden `
+                    -ArgumentList "-NoProfile", "-Command", "Stop-Process -Id $($needElevation -join ',') -Force -ErrorAction SilentlyContinue"
+            } catch {
+                Write-Host "  Elevation declined -- continuing; the swap may fail while they run." -ForegroundColor Yellow
+            }
+        }
+        # Give Windows a beat to release the file handles. Poll by PID:
+        # HasExited/WaitForExit throw access-denied on elevated targets.
+        $deadline = (Get-Date).AddSeconds(10)
+        while ((Get-Date) -lt $deadline) {
+            $still = @($running | Where-Object { Get-Process -Id $_.Id -ErrorAction SilentlyContinue })
+            if ($still.Count -eq 0) { break }
+            Start-Sleep -Milliseconds 500
+        }
     }
 }
 

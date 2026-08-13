@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from suite_common.llm import LLMError
+from suite_common.ui import worker_registry
 
 if TYPE_CHECKING:
     from caseguide.case_reader import CaseScope
@@ -52,6 +53,7 @@ class RefineWorker(QThread):
         self._refiner = refiner
         self._scope = scope
         self._drafts = drafts
+        worker_registry.track(self)
 
     def run(self) -> None:
         try:
