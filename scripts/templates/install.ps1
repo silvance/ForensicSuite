@@ -345,10 +345,52 @@ if (Test-Path $InstallRoot) {
     }
 }
 
+# 3b. Wait out the antivirus scan of the staged files -----------------------
+# Staging just wrote ~700 brand-new PE binaries with hashes the AV has
+# never seen. Real-time protection (Defender's block-at-first-sight
+# cloud check in particular) takes EXCLUSIVE holds on such files while
+# it scans, which blocks both the directory rename and per-file
+# overwrites -- field logs showed exactly the .exe/.dll/.pyd set locked
+# with ERROR 32 on every install attempt, across reboots, because each
+# re-stage re-triggers the scan. Probe every staged binary with an
+# exclusive open and only proceed once the scanner has let go.
+
+Write-Step "Waiting for antivirus/indexer to release freshly staged files"
+$pending = @(Get-ChildItem -Recurse -File -LiteralPath $stagingRoot |
+    Where-Object { $_.Extension -in @(".exe", ".dll", ".pyd") })
+$settleDeadline = (Get-Date).AddSeconds(180)
+$lastReport = 0
+while ($true) {
+    $stillLocked = @()
+    foreach ($f in $pending) {
+        try {
+            $fs = [System.IO.File]::Open($f.FullName, "Open", "Read", "None")
+            $fs.Close()
+        } catch {
+            $stillLocked += $f
+        }
+    }
+    $pending = $stillLocked
+    if ($pending.Count -eq 0) {
+        Write-Host "  All staged binaries released."
+        break
+    }
+    if ((Get-Date) -ge $settleDeadline) {
+        Write-Host "  $($pending.Count) file(s) still held after 180s (e.g. $($pending[0].Name)) -- proceeding anyway; the swap below has its own retries." -ForegroundColor Yellow
+        break
+    }
+    if ($pending.Count -ne $lastReport) {
+        Write-Host "  $($pending.Count) file(s) still being scanned; waiting..."
+        $lastReport = $pending.Count
+    }
+    Start-Sleep -Seconds 3
+}
+
 Write-Step "Swapping new install in"
-# A couple of retries absorbs the transient cases: AV scanners touching
-# freshly-written files, and handle teardown from processes stopped above.
-$maxAttempts = 3
+# Backoff absorbs the transient cases: AV re-touching files, handle
+# teardown from processes stopped above, indexer passes.
+$swapWaits = @(2, 4, 8, 15)
+$maxAttempts = $swapWaits.Count + 1
 for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     try {
         if (Test-Path $InstallRoot) {
@@ -361,8 +403,9 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         break
     } catch {
         if ($attempt -lt $maxAttempts) {
-            Write-Host "  Swap attempt $attempt failed ($($_.Exception.Message.Trim())); retrying in 2s..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 2
+            $wait = $swapWaits[$attempt - 1]
+            Write-Host "  Swap attempt $attempt failed ($($_.Exception.Message.Trim())); retrying in ${wait}s..." -ForegroundColor Yellow
+            Start-Sleep -Seconds $wait
             continue
         }
         # Best-effort rollback: put the old install back.
@@ -387,7 +430,9 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
                 $xd += (Join-Path $InstallRoot $aiDir)
             }
         }
-        $roboArgs = @($stagingRoot, $InstallRoot, "/MIR", "/R:2", "/W:2", "/NFL", "/NDL", "/NJH", "/NP")
+        # /R:10 /W:5 = up to ~50s of per-file patience -- enough to
+        # outlast an AV cloud-verdict hold on an individual binary.
+        $roboArgs = @($stagingRoot, $InstallRoot, "/MIR", "/R:10", "/W:5", "/NFL", "/NDL", "/NJH", "/NP")
         if ($xd.Count -gt 0) { $roboArgs += "/XD"; $roboArgs += $xd }
         & robocopy @roboArgs
         # Robocopy exit codes 0-7 are success grades; 8+ means files failed.
@@ -398,11 +443,15 @@ update could not complete (robocopy exit $LASTEXITCODE). The previous
 install should still be substantially intact at $InstallRoot.
 
 Something is holding files in that folder. Common holders:
+  - Antivirus real-time protection scanning the freshly written
+    binaries (the usual culprit): add an exclusion for
+    $InstallRoot and its '.new' sibling in Windows Security ->
+    Virus & threat protection -> Exclusions (or your AV's
+    equivalent), re-run the installer, then remove the exclusion.
   - The suite launcher window (its working directory is the install
     folder -- Quit it, and close any PowerShell/cmd window sitting
     in that folder)
   - An Explorer window open inside the install folder
-  - Antivirus mid-scan (wait a minute and re-run)
 Close the holder and re-run the installer -- or reboot and re-run,
 which clears every orphaned handle.
 "@
