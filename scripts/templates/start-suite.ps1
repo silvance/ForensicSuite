@@ -57,6 +57,22 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
 
+# Announce which build this launcher belongs to, so "did the upgrade
+# actually land?" is answerable at a glance instead of by symptom.
+# (A field debugging round went in circles because a blocked install
+# kept the old launcher on disk with no visible tell.)
+$versionPath = Join-Path $Root "version.json"
+if (Test-Path $versionPath) {
+    try {
+        $v = Get-Content -Raw -LiteralPath $versionPath | ConvertFrom-Json
+        $sha = if ($v.git_sha) { $v.git_sha.Substring(0, [Math]::Min(8, $v.git_sha.Length)) } else { "unknown" }
+        $built = if ($v.build_timestamp) { $v.build_timestamp } else { "unknown" }
+        Write-Host "Inscription suite launcher -- build $sha (built $built)" -ForegroundColor DarkGray
+    } catch {
+        # Unreadable version.json is not worth blocking launch over.
+    }
+}
+
 # --------------------------------------------------------------- environment
 
 # Bundled Ollama runs on a dedicated, non-default port so we never
