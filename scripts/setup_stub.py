@@ -53,7 +53,11 @@ def _fail(message: str) -> None:
 def _launch_installed(install_root: Path) -> None:
     launcher = install_root / "start-suite.ps1"
     # start-suite.ps1 self-elevates for UIA visibility; launch it the
-    # same way the Start Menu shortcut does.
+    # same way the Start Menu shortcut does. It needs a real console:
+    # when this exe itself runs elevated ("Run as administrator") the
+    # launcher skips its relaunch, so a hidden window would leave an
+    # invisible menu waiting on Read-Host -- with Ollama serving from
+    # the install folder, blocking the next upgrade's swap.
     subprocess.Popen(
         [
             "powershell.exe",
@@ -63,7 +67,7 @@ def _launch_installed(install_root: Path) -> None:
             "-File",
             str(launcher),
         ],
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
     )
 
 

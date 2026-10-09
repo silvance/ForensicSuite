@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import socket
 import urllib.error
 import urllib.request
@@ -50,6 +51,46 @@ DEFAULT_LLM_MODEL = "gemma4:latest"
 #: high enough that the real failure mode is "model didn't start" or
 #: "endpoint not reachable" rather than "we gave up too early".
 DEFAULT_LLM_TIMEOUT_S = 600.0
+
+
+def effective_llm_default(env_var: str, builtin_default: str) -> str:
+    """The value an app uses when the operator hasn't chosen one.
+
+    The air-gapped launcher exports ``SUITE_LLM_MODEL`` /
+    ``SUITE_LLM_BASE_URL`` for the bundled Ollama; blank counts as unset.
+    """
+    return os.environ.get(env_var, "").strip() or builtin_default
+
+
+def resolve_llm_setting(stored: object, *, env_var: str, builtin_default: str) -> str:
+    """Pick between a value saved in Settings and the launcher's default.
+
+    An explicit operator choice wins over the launcher -- EXCEPT a saved
+    value equal to the built-in default, which is treated as unset.
+    Settings dialogs used to persist every field on OK, so one visit
+    pinned the built-in default (``gemma4:latest`` on 11434) forever;
+    on a bundle carrying a different model that guaranteed a
+    model-not-found 404 that no launcher choice could fix. Such a value
+    carries no intent beyond "the default", so the launcher's current
+    choice applies instead.
+    """
+    value = str(stored).strip() if stored is not None else ""
+    if not value or value == builtin_default:
+        return effective_llm_default(env_var, builtin_default)
+    return value
+
+
+def llm_setting_to_store(value: str, *, env_var: str, builtin_default: str) -> str | None:
+    """What to persist for ``value``; ``None`` means remove the saved key.
+
+    A value equal to the current effective default is not an override:
+    storing it would freeze today's default and silently ignore the
+    launcher's choice in every later session.
+    """
+    value = value.strip()
+    if not value or value == effective_llm_default(env_var, builtin_default):
+        return None
+    return value
 
 #: Hard cap on the response body. A verbose chat-completion sits well
 #: under 100 KB; we accept up to 10 MB so a chatty model on a huge input

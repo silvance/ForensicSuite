@@ -115,3 +115,55 @@ def test_remember_case_moves_duplicate_to_head(tmp_path) -> None:
     assert len(paths) == 2
     assert paths[0] == "/cases/foo/"  # newest, bumped to head
     assert paths[1] == "/cases/bar"
+
+
+# ---- defaults pinned by a Settings visit must not override the launcher --
+# Field bug: Settings persisted every field on OK, so one visit wrote the
+# built-in defaults (gemma4:latest on 11434). On a bundle carrying a
+# different model that pinned a guaranteed 404 / connection-refused that
+# no launcher choice could fix.
+
+_BUNDLED_MODEL = "qwen2.5:7b-instruct-q5_K_M"
+_BUNDLED_URL = "http://127.0.0.1:11435/v1"
+
+
+def _legacy_pinned_ini(tmp_path):
+    """An INI exactly as the old Settings dialog left it after one OK."""
+    ini = tmp_path / "c.ini"
+    ini.write_text(
+        f"[llm]\nmodel={DEFAULT_LLM_MODEL}\nbase_url={DEFAULT_LLM_BASE_URL}\n",
+        encoding="utf-8",
+    )
+    return ini
+
+
+def test_legacy_pinned_defaults_yield_to_the_launcher(tmp_path, monkeypatch) -> None:
+    ini = _legacy_pinned_ini(tmp_path)
+    monkeypatch.setenv("SUITE_LLM_MODEL", _BUNDLED_MODEL)
+    monkeypatch.setenv("SUITE_LLM_BASE_URL", _BUNDLED_URL)
+    cfg = Config(path=ini)
+    assert cfg.llm_model == _BUNDLED_MODEL
+    assert cfg.llm_base_url == _BUNDLED_URL
+
+
+def test_settings_ok_without_changes_pins_nothing(tmp_path, monkeypatch) -> None:
+    """Saving the values the dialog displayed must not freeze them: the
+    next launcher session's choice still applies."""
+    ini = tmp_path / "c.ini"
+    monkeypatch.setenv("SUITE_LLM_MODEL", _BUNDLED_MODEL)
+    cfg = Config(path=ini)
+    cfg.llm_model = cfg.llm_model  # what the dialog's commit() does
+    cfg.llm_base_url = cfg.llm_base_url
+    cfg.sync()
+
+    monkeypatch.setenv("SUITE_LLM_MODEL", "granite4:tiny-h")
+    assert Config(path=ini).llm_model == "granite4:tiny-h"
+
+
+def test_genuine_override_still_survives_the_launcher(tmp_path, monkeypatch) -> None:
+    ini = tmp_path / "c.ini"
+    monkeypatch.setenv("SUITE_LLM_MODEL", _BUNDLED_MODEL)
+    cfg = Config(path=ini)
+    cfg.llm_model = "llama3.3:70b-instruct-q4_K_M"
+    cfg.sync()
+    assert Config(path=ini).llm_model == "llama3.3:70b-instruct-q4_K_M"
