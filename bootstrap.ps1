@@ -60,10 +60,10 @@ function Get-PythonExecutable {
     # older Python 3 from PATH doesn't get picked.
     foreach ($candidate in @('py -3.12', 'py -3.13', 'py -3', 'python', 'python3')) {
         $cmd = $candidate.Split(' ')[0]
-        $args = if ($candidate.Contains(' ')) { $candidate.Substring($cmd.Length + 1) } else { '' }
+        $extraArgs = if ($candidate.Contains(' ')) { $candidate.Substring($cmd.Length + 1) } else { '' }
         if (Get-Command $cmd -ErrorAction SilentlyContinue) {
             try {
-                $checkCommand = if ($args) { "$cmd $args -c `"import sys; print(sys.version_info.major, sys.version_info.minor)`"" }
+                $checkCommand = if ($extraArgs) { "$cmd $extraArgs -c `"import sys; print(sys.version_info.major, sys.version_info.minor)`"" }
                                 else       { "$cmd -c `"import sys; print(sys.version_info.major, sys.version_info.minor)`"" }
                 $version = (Invoke-Expression $checkCommand) -split ' '
                 $major = [int]$version[0]

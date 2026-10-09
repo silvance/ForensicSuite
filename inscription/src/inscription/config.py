@@ -6,7 +6,6 @@ they can be inspected and edited outside the application when needed.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Final
 
@@ -47,30 +46,9 @@ from suite_common.llm import (  # noqa: E402
     DEFAULT_LLM_BASE_URL,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_TIMEOUT_S,
+    llm_setting_to_store,
+    resolve_llm_setting,
 )
-
-
-def _bundled_default_model() -> str:
-    """Resolve the model the apps fall back to when the user hasn't picked one.
-
-    The air-gapped launcher sets ``SUITE_LLM_MODEL`` after asking the
-    operator which bundled model to use. Honour it so the launcher's
-    choice propagates to whichever app the user opens next, while still
-    yielding to an explicit per-user override saved via Settings.
-    """
-    return os.environ.get(_ENV_SUITE_LLM_MODEL, "").strip() or DEFAULT_LLM_MODEL
-
-
-def _bundled_default_base_url() -> str:
-    """Resolve the LLM endpoint URL the apps fall back to.
-
-    The air-gapped launcher sets ``SUITE_LLM_BASE_URL`` to point at the
-    bundled Ollama on its dedicated non-default port (so the apps don't
-    accidentally talk to a system-wide Ollama listening on 11434).
-    Same precedence as ``_bundled_default_model``: env var beats the
-    hard-coded default but the user's QSettings choice still wins.
-    """
-    return os.environ.get(_ENV_SUITE_LLM_BASE_URL, "").strip() or DEFAULT_LLM_BASE_URL
 
 
 class Config:
@@ -155,21 +133,47 @@ class Config:
     def llm_enabled(self, value: bool) -> None:
         self._qs.setValue(_K_LLM_ENABLED, bool(value))
 
+    def _store_llm_setting(
+        self, key: str, value: str, *, env_var: str, builtin_default: str
+    ) -> None:
+        """Persist only genuine overrides; a value equal to the current
+        default removes the key so the launcher's choice keeps flowing."""
+        stored = llm_setting_to_store(value, env_var=env_var, builtin_default=builtin_default)
+        if stored is None:
+            self._qs.remove(key)
+        else:
+            self._qs.setValue(key, stored)
+
     @property
     def llm_base_url(self) -> str:
-        return str(self._qs.value(_K_LLM_BASE_URL, _bundled_default_base_url()))
+        return resolve_llm_setting(
+            self._qs.value(_K_LLM_BASE_URL),
+            env_var=_ENV_SUITE_LLM_BASE_URL,
+            builtin_default=DEFAULT_LLM_BASE_URL,
+        )
 
     @llm_base_url.setter
     def llm_base_url(self, value: str) -> None:
-        self._qs.setValue(_K_LLM_BASE_URL, value)
+        self._store_llm_setting(
+            _K_LLM_BASE_URL,
+            value,
+            env_var=_ENV_SUITE_LLM_BASE_URL,
+            builtin_default=DEFAULT_LLM_BASE_URL,
+        )
 
     @property
     def llm_model(self) -> str:
-        return str(self._qs.value(_K_LLM_MODEL, _bundled_default_model()))
+        return resolve_llm_setting(
+            self._qs.value(_K_LLM_MODEL),
+            env_var=_ENV_SUITE_LLM_MODEL,
+            builtin_default=DEFAULT_LLM_MODEL,
+        )
 
     @llm_model.setter
     def llm_model(self, value: str) -> None:
-        self._qs.setValue(_K_LLM_MODEL, value)
+        self._store_llm_setting(
+            _K_LLM_MODEL, value, env_var=_ENV_SUITE_LLM_MODEL, builtin_default=DEFAULT_LLM_MODEL
+        )
 
     @property
     def llm_timeout_s(self) -> float:

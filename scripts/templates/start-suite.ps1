@@ -172,12 +172,14 @@ function Get-BundledModels {
     return $found | Sort-Object
 }
 
-# @() at the call site is load-bearing: PowerShell unrolls a
-# one-element array returned from a function into a bare string, and
-# indexing a string yields its first CHARACTER -- a single-model
-# bundle exported SUITE_LLM_MODEL="q" instead of the model name,
-# which broke AI rewrite on every single-model install.
-$bundledModels = if ($HaveOllama) { @(Get-BundledModels) } else { @() }
+# The OUTER @() is load-bearing: PowerShell unrolls a one-element
+# array into a bare string -- both when a function returns it AND when
+# an if-statement emits it -- and indexing a string yields its first
+# CHARACTER. `= if (...) { @(...) }` is NOT enough (the if re-unrolls
+# the inner array); that form shipped and kept exporting
+# SUITE_LLM_MODEL="q" on single-model installs. Covered by
+# suite_common/tests/test_powershell_templates.py.
+$bundledModels = @(if ($HaveOllama) { Get-BundledModels })
 if ($bundledModels.Count -eq 0) {
     Write-Host "No bundled models found under .\models -- the apps will fall back to their built-in default." -ForegroundColor Yellow
 } elseif ($bundledModels.Count -eq 1) {
